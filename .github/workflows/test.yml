@@ -1,0 +1,222 @@
+name: Test Suite
+
+on:
+  push:
+    branches: [main, claude/**]
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_ENV: test
+  JWT_SECRET: test-jwt-secret-key-32-characters!!
+  GITHUB_CLIENT_ID: test-github-client-id
+  GITHUB_CLIENT_SECRET: test-github-client-secret
+  NEXT_PUBLIC_APP_URL: http://localhost:3000
+
+jobs:
+  unit:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: ./code
+
+      - name: Run unit tests
+        run: npm run test:unit
+        working-directory: ./code
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./code/coverage/lcov.info
+          flags: unit
+          fail_ci_if_error: false
+
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    # Uncomment when database is set up
+    # services:
+    #   postgres:
+    #     image: postgres:15
+    #     env:
+    #       POSTGRES_USER: postgres
+    #       POSTGRES_PASSWORD: postgres
+    #       POSTGRES_DB: decision_log_test
+    #     options: >-
+    #       --health-cmd pg_isready
+    #       --health-interval 10s
+    #       --health-timeout 5s
+    #       --health-retries 5
+    #     ports:
+    #       - 5432:5432
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: ./code
+
+      # Uncomment when database is set up
+      # - name: Run database migrations
+      #   run: npx prisma migrate deploy
+      #   working-directory: ./code
+      #   env:
+      #     DATABASE_URL: postgresql://postgres:postgres@localhost:5432/decision_log_test
+
+      - name: Run integration tests
+        run: npm run test:integration
+        working-directory: ./code
+        # env:
+        #   DATABASE_URL: postgresql://postgres:postgres@localhost:5432/decision_log_test
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./code/coverage/lcov.info
+          flags: integration
+          fail_ci_if_error: false
+
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: [unit] # Run E2E only if unit tests pass
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: ./code
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+        working-directory: ./code
+
+      - name: Build application
+        run: npm run build
+        working-directory: ./code
+
+      - name: Run E2E tests
+        run: npm run test:e2e
+        working-directory: ./code
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: code/playwright-report/
+          retention-days: 7
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-results
+          path: code/test-results/
+          retention-days: 7
+
+  lint:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: ./code
+
+      - name: Run ESLint
+        run: npm run lint
+        working-directory: ./code
+
+      - name: Run TypeScript type check
+        run: npx tsc --noEmit
+        working-directory: ./code
+
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Run npm audit
+        run: npm audit --audit-level=moderate
+        working-directory: ./code
+        continue-on-error: true
+
+      # Optional: Add Snyk or other security scanning tools
+      # - name: Run Snyk security scan
+      #   uses: snyk/actions/node@master
+      #   env:
+      #     SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      #   with:
+      #     args: --severity-threshold=high
+
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [unit, integration, e2e, lint, security]
+    if: always()
+    steps:
+      - name: Check test results
+        run: |
+          echo "Unit Tests: ${{ needs.unit.result }}"
+          echo "Integration Tests: ${{ needs.integration.result }}"
+          echo "E2E Tests: ${{ needs.e2e.result }}"
+          echo "Lint: ${{ needs.lint.result }}"
+          echo "Security: ${{ needs.security.result }}"
+
+      - name: Fail if any required job failed
+        if: |
+          needs.unit.result == 'failure' ||
+          needs.integration.result == 'failure' ||
+          needs.e2e.result == 'failure' ||
+          needs.lint.result == 'failure'
+        run: exit 1
+
+      - name: All tests passed
+        if: |
+          needs.unit.result == 'success' &&
+          needs.integration.result == 'success' &&
+          needs.e2e.result == 'success' &&
+          needs.lint.result == 'success'
+        run: echo "✅ All tests passed successfully!"
