@@ -74,7 +74,7 @@ export async function GET(
           where: { id: repoId },
           select: { fullName: true },
         }),
-        decisions: decisions.map((d) => ({
+        decisions: decisions.map((d: any) => ({
           id: d.id,
           title: d.title,
           context: d.context,

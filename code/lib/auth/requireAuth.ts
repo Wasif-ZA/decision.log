@@ -7,9 +7,8 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyJWT } from '@/lib/jwt'
-import { db } from '@/lib/db'
+import { db, type User } from '@/lib/db'
 import { UnauthorizedError, handleError } from '@/lib/errors'
-import type { User } from '@prisma/client'
 
 export interface AuthContext {
   user: User

@@ -117,7 +117,7 @@ export async function GET(request: Request) {
 
         // Check if this is a new user (no enabled repos)
         const isNewUser = user.repos.length === 0;
-        const trackedRepoIds = user.repos.map((r) => r.id);
+        const trackedRepoIds = user.repos.map((r: any) => r.id);
 
         // Sign JWT
         const jwt = await signJWT({
