@@ -46,10 +46,10 @@ export async function checkExtractionLimit(
   })
 
   const todayCount = todayExtractions.reduce(
-    (sum, e) => sum + e.batchSize,
+    (sum: number, e: any) => sum + e.batchSize,
     0
   )
-  const todayCost = todayExtractions.reduce((sum, e) => sum + e.totalCost, 0)
+  const todayCost = todayExtractions.reduce((sum: number, e: any) => sum + e.totalCost, 0)
 
   // Get all-time stats
   const allTime = await db.extractionCost.aggregate({
@@ -139,8 +139,8 @@ export async function getUserCostStats(userId: string): Promise<{
     },
   })
 
-  const totalCost = costs.reduce((sum, c) => sum + c.totalCost, 0)
-  const totalExtractions = costs.reduce((sum, c) => sum + c.batchSize, 0)
+  const totalCost = costs.reduce((sum: number, c: any) => sum + c.totalCost, 0)
+  const totalExtractions = costs.reduce((sum: number, c: any) => sum + c.batchSize, 0)
 
   // Group by repo
   const repoMap = new Map<

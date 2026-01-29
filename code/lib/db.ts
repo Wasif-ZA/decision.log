@@ -10,7 +10,7 @@ const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
 }
 
-export const db =
+export const db: PrismaClient =
   globalForPrisma.prisma ??
   new PrismaClient({
     log:
@@ -22,3 +22,6 @@ export const db =
 if (process.env.NODE_ENV !== 'production') {
   globalForPrisma.prisma = db
 }
+
+// Re-export Prisma types for convenience
+export type { User, Repo, Artifact, Candidate, Decision } from '@prisma/client'

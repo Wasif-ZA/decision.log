@@ -8,7 +8,7 @@
  * Threshold: 0.4 for candidate promotion
  */
 
-import type { Artifact } from '@prisma/client'
+import type { Artifact } from '@/lib/db'
 
 export interface SieveScore {
   total: number // 0.0 - 1.0

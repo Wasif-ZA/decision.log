@@ -1,46 +1,73 @@
 // ===========================================
-// List Repositories (Stub)
+// List User Repositories from GitHub
 // ===========================================
 
 import { NextResponse } from 'next/server';
+import { requireAuth } from '@/lib/auth/requireAuth';
+import { decrypt } from '@/lib/crypto';
+import { GitHubError, handleError } from '@/lib/errors';
 import type { Repo } from '@/types/app';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
-    // MVP Stub: Return mock repositories
-    // In production: Fetch from GitHub API using stored token
+export const GET = requireAuth(async (req, { user }) => {
+    try {
+        // Decrypt GitHub token
+        if (!user.githubTokenEncrypted || !user.githubTokenIv) {
+            return NextResponse.json(
+                { code: 'UNAUTHORIZED', message: 'GitHub token not found' },
+                { status: 401 }
+            );
+        }
 
-    const mockRepos: Repo[] = [
-        {
-            id: 'repo-1',
-            name: 'decision-log',
-            fullName: 'your-org/decision-log',
-            defaultBranch: 'main',
-            accessStatus: 'active',
-        },
-        {
-            id: 'repo-2',
-            name: 'frontend-app',
-            fullName: 'your-org/frontend-app',
-            defaultBranch: 'main',
-            accessStatus: 'active',
-        },
-        {
-            id: 'repo-3',
-            name: 'api-service',
-            fullName: 'your-org/api-service',
-            defaultBranch: 'master',
-            accessStatus: 'active',
-        },
-        {
-            id: 'repo-4',
-            name: 'infrastructure',
-            fullName: 'your-org/infrastructure',
-            defaultBranch: 'main',
-            accessStatus: 'active',
-        },
-    ];
+        const githubToken = await decrypt(
+            user.githubTokenEncrypted,
+            user.githubTokenIv
+        );
 
-    return NextResponse.json({ repos: mockRepos });
-}
+        // Fetch repositories from GitHub
+        const response = await fetch('https://api.github.com/user/repos?per_page=100&sort=updated', {
+            headers: {
+                Authorization: `Bearer ${githubToken}`,
+                Accept: 'application/vnd.github.v3+json',
+            },
+        });
+
+        if (!response.ok) {
+            if (response.status === 401) {
+                return NextResponse.json(
+                    { code: 'UNAUTHORIZED', message: 'GitHub token invalid or expired' },
+                    { status: 401 }
+                );
+            }
+            throw new GitHubError(
+                'Failed to fetch repositories from GitHub',
+                response.status
+            );
+        }
+
+        const githubRepos = await response.json();
+
+        // Transform to our Repo format
+        const repos: Repo[] = githubRepos.map((repo: any) => ({
+            id: String(repo.id),
+            name: repo.name,
+            fullName: repo.full_name,
+            defaultBranch: repo.default_branch || 'main',
+            accessStatus: 'active',
+            private: repo.private,
+        }));
+
+        return NextResponse.json({ repos });
+    } catch (error) {
+        const formatted = handleError(error);
+        return NextResponse.json(
+            {
+                code: formatted.code,
+                message: formatted.message,
+                details: formatted.details,
+            },
+            { status: formatted.statusCode }
+        );
+    }
+});

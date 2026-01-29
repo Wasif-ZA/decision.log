@@ -34,7 +34,7 @@ export async function fetchPullRequests(
 
   try {
     // Parse cursor to determine where to start
-    const parsed = parseCursor(options.cursor)
+    const parsed = parseCursor(options.cursor ?? null)
     let sinceDate: string | undefined
 
     if (parsed?.type === 'timestamp') {
@@ -164,7 +164,7 @@ export async function fetchCommits(
 
   try {
     // Parse cursor
-    const parsed = parseCursor(options.cursor)
+    const parsed = parseCursor(options.cursor ?? null)
     let since: string | undefined
 
     if (parsed?.type === 'timestamp') {
