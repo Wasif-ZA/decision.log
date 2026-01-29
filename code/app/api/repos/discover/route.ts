@@ -51,7 +51,7 @@ export const GET = requireAuth(async (req, { user }) => {
     })
 
     const existingMap = new Map(
-      existingRepos.map((r) => [r.fullName, r.enabled])
+      existingRepos.map((r: any) => [r.fullName, r.enabled])
     )
 
     // Format response
