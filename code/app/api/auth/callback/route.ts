@@ -5,7 +5,9 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { signJWT, getSessionCookieOptions, SESSION_COOKIE_NAME, OAUTH_STATE_COOKIE_NAME } from '@/lib/jwt';
-import { storeGitHubToken } from '@/lib/github-token';
+import { db } from '@/lib/db';
+import { encrypt } from '@/lib/crypto';
+import { logError } from '@/lib/errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -82,20 +84,47 @@ export async function GET(request: Request) {
 
         const userData = await userResponse.json();
 
-        // Store GitHub token server-side
-        await storeGitHubToken(String(userData.id), accessToken, tokenType, scope);
+        // Encrypt GitHub token
+        const { encrypted, iv } = await encrypt(accessToken);
 
-        // Check if this is a new user (for setupComplete)
-        // For MVP, we'll check if they have any tracked repos
-        // In production, this would be a DB lookup
-        const isNewUser = true; // MVP: always treat as new user for first-time flow
+        // Create or update user in database
+        const user = await db.user.upsert({
+            where: { githubId: userData.id },
+            create: {
+                githubId: userData.id,
+                login: userData.login,
+                name: userData.name,
+                email: userData.email,
+                avatarUrl: userData.avatar_url,
+                githubTokenEncrypted: encrypted,
+                githubTokenIv: iv,
+            },
+            update: {
+                login: userData.login,
+                name: userData.name,
+                email: userData.email,
+                avatarUrl: userData.avatar_url,
+                githubTokenEncrypted: encrypted,
+                githubTokenIv: iv,
+            },
+            include: {
+                repos: {
+                    where: { enabled: true },
+                    select: { id: true },
+                },
+            },
+        });
+
+        // Check if this is a new user (no enabled repos)
+        const isNewUser = user.repos.length === 0;
+        const trackedRepoIds = user.repos.map((r) => r.id);
 
         // Sign JWT
         const jwt = await signJWT({
-            sub: String(userData.id),
-            login: userData.login,
+            sub: user.id,
+            login: user.login,
             setupComplete: !isNewUser,
-            trackedRepoIds: [],
+            trackedRepoIds,
         });
 
         // Set session cookie
@@ -109,7 +138,7 @@ export async function GET(request: Request) {
         return NextResponse.redirect(new URL(redirectTo, request.url));
 
     } catch (error) {
-        console.error('OAuth callback error:', error);
+        logError(error, 'OAuth callback');
         return NextResponse.redirect(new URL('/login?error=callback_error', request.url));
     }
 }
