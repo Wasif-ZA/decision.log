@@ -1,41 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
+import { ArrowLeft, ExternalLink } from "lucide-react";
+import { LoadingSkeleton } from "@/components/ui/LoadingSkeleton";
+import { ErrorState } from "@/components/ui/ErrorState";
+import type { DecisionDetail as DecisionDetailType, DecisionResponse } from "@/types/app";
 
-// Mock Data for a specific decision
-const MOCK_DETAIL = {
-    id: "14",
-    title: "Introduce caching layer",
-    confidence: 0.82,
-    verified: true,
-    context: [
-        "Auth latency exceeded SLA under load (avg 400ms > 200ms)",
-        "Spike during peak traffic window (09:00 UTC)",
-    ],
-    decision: [
-        "Added Redis-based cache in auth middleware",
-        "Cache TTL set to 5 minutes to balance freshness/perf",
-    ],
-    alternatives: [
-        {
-            title: "Vertical scaling",
-            status: "Rejected",
-            reason: "Cost prohibitive ($400/mo extra)",
-        },
-        {
-            title: "Query optimization",
-            status: "Insufficient",
-            reason: "Database CPU was not the bottleneck",
-        },
-    ],
-    constraints: ["SLA breach requires immediate fix", "Time pressure: Incident response"],
-    evidence: [
-        { type: "Commit", id: "a83f2c1", desc: "Implementation" },
-        { type: "PR", id: "#214", desc: "Code Review" },
-        { type: "Snapshot", id: "diff-1", desc: "Request Latency Drop" },
-    ],
-};
+// ─────────────────────────────────────────────
+// Section Component
+// ─────────────────────────────────────────────
 
 interface SectionProps {
     title: string;
@@ -59,106 +33,215 @@ function Section({ title, defaultOpen = true, children }: SectionProps) {
     );
 }
 
-export default function DecisionDetail() {
-    const data = MOCK_DETAIL;
+// ─────────────────────────────────────────────
+// Decision Detail Component
+// ─────────────────────────────────────────────
+
+interface DecisionDetailProps {
+    decisionId: string;
+}
+
+export default function DecisionDetail({ decisionId }: DecisionDetailProps) {
+    const [decision, setDecision] = useState<DecisionDetailType | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+
+    const fetchDecision = async () => {
+        setLoading(true);
+        setError(null);
+
+        try {
+            const response = await fetch(`/api/decisions/${decisionId}`);
+
+            if (!response.ok) {
+                const data = await response.json();
+                throw new Error(data.message || 'Failed to fetch decision');
+            }
+
+            const data: DecisionResponse = await response.json();
+            setDecision(data.decision);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'An error occurred');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        if (decisionId) {
+            fetchDecision();
+        }
+    }, [decisionId]);
+
+    if (loading) {
+        return (
+            <div className="max-w-4xl mx-auto w-full p-8">
+                <LoadingSkeleton className="h-8 w-32 mb-6" />
+                <LoadingSkeleton className="h-12 w-3/4 mb-4" />
+                <LoadingSkeleton className="h-6 w-48 mb-8" />
+                <LoadingSkeleton className="h-32 mb-4" />
+                <LoadingSkeleton className="h-32 mb-4" />
+                <LoadingSkeleton className="h-32" />
+            </div>
+        );
+    }
+
+    if (error) {
+        return (
+            <div className="max-w-4xl mx-auto w-full p-8">
+                <Link href="/timeline" className="text-xs font-mono text-base-500 hover:text-base-900 mb-6 flex items-center gap-1">
+                    <ArrowLeft className="w-3 h-3" />
+                    Back to Timeline
+                </Link>
+                <ErrorState
+                    title="Failed to load decision"
+                    message={error}
+                    onRetry={fetchDecision}
+                />
+            </div>
+        );
+    }
+
+    if (!decision) {
+        return (
+            <div className="max-w-4xl mx-auto w-full p-8">
+                <Link href="/timeline" className="text-xs font-mono text-base-500 hover:text-base-900 mb-6 flex items-center gap-1">
+                    <ArrowLeft className="w-3 h-3" />
+                    Back to Timeline
+                </Link>
+                <p className="text-base-500">Decision not found</p>
+            </div>
+        );
+    }
+
+    const artifact = decision.candidate?.artifact;
+    const date = new Date(decision.createdAt);
+    const formattedDate = date.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+    });
 
     return (
         <div className="max-w-4xl mx-auto w-full p-8">
             {/* Back Link */}
-            <Link href="/" className="text-xs font-mono text-base-500 hover:text-base-900 mb-6 block">
-                ← Back to Timeline
+            <Link href="/timeline" className="text-xs font-mono text-base-500 hover:text-base-900 mb-6 flex items-center gap-1">
+                <ArrowLeft className="w-3 h-3" />
+                Back to Timeline
             </Link>
 
             {/* Header */}
             <div className="mb-8 border-b border-base-200 pb-6">
                 <div className="flex items-center gap-3 mb-2">
-                    <span className="font-mono text-xs text-base-500">Decision #{data.id}</span>
-                    {data.verified && (
-                        <span className="px-2 py-0.5 bg-green-50 text-green-700 text-xs font-medium rounded-full flex items-center gap-1 border border-green-200">
-                            Verified ✔
+                    <span className="font-mono text-xs text-base-500">
+                        {artifact?.type === 'pr' ? `PR #${artifact.githubId}` : `Commit ${artifact?.githubId?.toString().slice(0, 7)}`}
+                    </span>
+                    <span className="text-xs text-base-400">{formattedDate}</span>
+                </div>
+                <h1 className="text-2xl font-semibold text-base-900 mb-3">{decision.title}</h1>
+                <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                        <div className="h-1.5 w-32 bg-base-200 rounded-full overflow-hidden">
+                            <div
+                                className={`h-full ${decision.significance > 0.8 ? "bg-green-500" : "bg-amber-500"}`}
+                                style={{ width: `${decision.significance * 100}%` }}
+                            />
+                        </div>
+                        <span className="text-sm font-medium text-base-600">
+                            Significance: {(decision.significance * 100).toFixed(0)}%
                         </span>
+                    </div>
+                    {artifact?.url && (
+                        <a
+                            href={artifact.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-sm text-accent-700 hover:text-accent-800 flex items-center gap-1"
+                        >
+                            View on GitHub
+                            <ExternalLink className="w-3 h-3" />
+                        </a>
                     )}
                 </div>
-                <h1 className="text-2xl font-semibold text-base-900 mb-2">{data.title}</h1>
-                <div className="flex items-center gap-2">
-                    <div className="h-1.5 w-32 bg-base-200 rounded-full overflow-hidden">
-                        <div
-                            className={`h-full ${data.confidence > 0.8 ? "bg-green-500" : "bg-amber-500"
-                                }`}
-                            style={{ width: `${data.confidence * 100}%` }}
-                        />
-                    </div>
-                    <span className="text-sm font-medium text-base-600">
-                        Confidence: {data.confidence}
-                    </span>
-                </div>
             </div>
+
+            {/* Tags */}
+            {decision.tags.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-6">
+                    {decision.tags.map((tag) => (
+                        <span
+                            key={tag}
+                            className="px-2 py-1 bg-base-100 text-base-700 text-sm rounded"
+                        >
+                            {tag}
+                        </span>
+                    ))}
+                </div>
+            )}
 
             {/* Core Logic */}
             <div className="space-y-2">
                 <Section title="Context">
-                    <ul className="list-disc list-inside space-y-1">
-                        {data.context.map((line, i) => (
-                            <li key={i}>{line}</li>
-                        ))}
-                    </ul>
+                    <p className="whitespace-pre-wrap">{decision.context}</p>
                 </Section>
 
                 <Section title="Decision">
-                    <ul className="list-disc list-inside space-y-1">
-                        {data.decision.map((line, i) => (
-                            <li key={i} className="font-medium text-base-900">
-                                {line}
-                            </li>
-                        ))}
-                    </ul>
+                    <p className="whitespace-pre-wrap font-medium text-base-900">{decision.decision}</p>
                 </Section>
 
-                <Section title="Alternatives Considered">
-                    <div className="space-y-3">
-                        {data.alternatives.map((alt, i) => (
-                            <div key={i} className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-2">
-                                <span className="font-medium text-base-800">{alt.title}</span>
-                                <span className="text-base-400 hidden sm:inline">—</span>
-                                <span className="text-base-600">
-                                    <span className="text-xs font-mono bg-base-100 px-1.5 py-0.5 rounded text-base-500 mr-2">
-                                        {alt.status}
-                                    </span>
-                                    {alt.reason}
-                                </span>
-                            </div>
-                        ))}
-                    </div>
+                <Section title="Reasoning">
+                    <p className="whitespace-pre-wrap">{decision.reasoning}</p>
                 </Section>
 
-                <Section title="Constraints">
-                    <ul className="list-disc list-inside space-y-1">
-                        {data.constraints.map((line, i) => (
-                            <li key={i}>{line}</li>
-                        ))}
-                    </ul>
+                <Section title="Consequences">
+                    <p className="whitespace-pre-wrap">{decision.consequences}</p>
                 </Section>
 
-                <Section title="Evidence" defaultOpen={true}>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                        {data.evidence.map((ev, i) => (
-                            <Link
-                                href={`/decision/${data.id}/evidence`}
-                                key={i}
-                                className="p-3 border border-base-200 rounded bg-base-50 hover:border-accent-300 hover:bg-accent-50 transition-colors cursor-pointer group block"
-                            >
-                                <div className="flex items-center justify-between mb-1">
+                {decision.alternatives && (
+                    <Section title="Alternatives Considered">
+                        <p className="whitespace-pre-wrap">{decision.alternatives}</p>
+                    </Section>
+                )}
+
+                {/* Source Information */}
+                <Section title="Source" defaultOpen={true}>
+                    <div className="space-y-2">
+                        {artifact && (
+                            <div className="p-3 border border-base-200 rounded bg-base-50">
+                                <div className="flex items-center justify-between mb-2">
                                     <span className="text-xs font-mono text-base-500 uppercase tracking-wider">
-                                        {ev.type}
+                                        {artifact.type === 'pr' ? 'Pull Request' : 'Commit'}
                                     </span>
-                                    <span className="text-base-400 group-hover:text-accent-600">↗</span>
+                                    {artifact.url && (
+                                        <a
+                                            href={artifact.url}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-base-400 hover:text-accent-600"
+                                        >
+                                            <ExternalLink className="w-4 h-4" />
+                                        </a>
+                                    )}
                                 </div>
                                 <div className="font-mono text-sm font-medium text-base-900 mb-1">
-                                    {ev.id}
+                                    {artifact.title}
                                 </div>
-                                <div className="text-xs text-base-600 truncate">{ev.desc}</div>
-                            </Link>
-                        ))}
+                                <div className="text-xs text-base-600">
+                                    by {artifact.author}
+                                    {artifact.mergedAt && ` • merged ${new Date(artifact.mergedAt).toLocaleDateString()}`}
+                                </div>
+                                {(artifact.filesChanged > 0) && (
+                                    <div className="text-xs text-base-500 mt-2">
+                                        {artifact.filesChanged} file{artifact.filesChanged !== 1 ? 's' : ''} changed
+                                        <span className="text-green-600 ml-2">+{artifact.additions}</span>
+                                        <span className="text-red-600 ml-1">-{artifact.deletions}</span>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                        <div className="text-xs text-base-500">
+                            Extracted by {decision.extractedBy}
+                        </div>
                     </div>
                 </Section>
             </div>
