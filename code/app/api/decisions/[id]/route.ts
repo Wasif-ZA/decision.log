@@ -1,151 +1,66 @@
-// ===========================================
-// Decision Detail Route
-// ===========================================
-
-import { NextResponse } from 'next/server';
-import { requireAuth } from '@/lib/auth/requireAuth';
-import { handleError, NotFoundError } from '@/lib/errors';
-import { prisma } from '@/lib/db';
-
-export const dynamic = 'force-dynamic';
-
-interface RouteParams {
-    params: Promise<{ id: string }>;
-}
-
 /**
+ * Get Single Decision
+ *
  * GET /api/decisions/[id]
- * Get decision details with evidence
+ * Fetch a single decision by ID
  */
-export async function GET(request: Request, { params }: RouteParams) {
+
+import { NextRequest, NextResponse } from 'next/server'
+import { requireAuth } from '@/lib/auth/requireAuth'
+import { handleError } from '@/lib/errors'
+import { db } from '@/lib/db'
+
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  return requireAuth(async (request, { user }) => {
     try {
-        const { userId } = await requireAuth();
-        const { id: decisionId } = await params;
+      const { id: decisionId } = await params
 
-        const decision = await prisma.decision.findUnique({
-            where: { id: decisionId },
+      // Get decision
+      const decision = await db.decision.findUnique({
+        where: { id: decisionId },
+        include: {
+          candidate: {
             include: {
-                repo: {
-                    select: {
-                        id: true,
-                        fullName: true,
-                        userId: true,
-                    },
-                },
-                createdBy: {
-                    select: {
-                        id: true,
-                        login: true,
-                        avatarUrl: true,
-                    },
-                },
-                evidence: {
-                    include: {
-                        artifact: {
-                            select: {
-                                id: true,
-                                type: true,
-                                title: true,
-                                url: true,
-                                prNumber: true,
-                                authorLogin: true,
-                                mergedAt: true,
-                            },
-                        },
-                    },
-                },
+              artifact: true,
             },
-        });
-
-        if (!decision) {
-            throw new NotFoundError('Decision');
-        }
-
-        // Verify user owns the repo
-        if (decision.repo.userId !== userId) {
-            throw new NotFoundError('Decision');
-        }
-
-        return NextResponse.json({
-            decision: {
-                id: decision.id,
-                title: decision.title,
-                context: decision.context,
-                decision: decision.decision,
-                consequences: decision.consequences,
-                impact: decision.impact,
-                sourceType: decision.sourceType,
-                createdAt: decision.createdAt,
-                updatedAt: decision.updatedAt,
-                repo: {
-                    id: decision.repo.id,
-                    fullName: decision.repo.fullName,
-                },
-                createdBy: decision.createdBy,
-                evidence: decision.evidence.map(e => ({
-                    id: e.id,
-                    role: e.role,
-                    artifact: e.artifact,
-                })),
+          },
+          repo: {
+            select: {
+              id: true,
+              fullName: true,
             },
-        });
+          },
+        },
+      })
 
+      if (!decision) {
+        return NextResponse.json(
+          { code: 'NOT_FOUND', message: 'Decision not found' },
+          { status: 404 }
+        )
+      }
+
+      if (decision.userId !== user.id) {
+        return NextResponse.json(
+          { code: 'FORBIDDEN', message: 'Access denied' },
+          { status: 403 }
+        )
+      }
+
+      return NextResponse.json({ decision })
     } catch (error) {
-        return handleError(error);
+      const formatted = handleError(error)
+      return NextResponse.json(
+        {
+          code: formatted.code,
+          message: formatted.message,
+          details: formatted.details,
+        },
+        { status: formatted.statusCode }
+      )
     }
-}
-
-/**
- * PATCH /api/decisions/[id]
- * Update decision details
- */
-export async function PATCH(request: Request, { params }: RouteParams) {
-    try {
-        const { userId } = await requireAuth();
-        const { id: decisionId } = await params;
-
-        const body = await request.json();
-
-        // Get existing decision
-        const existing = await prisma.decision.findUnique({
-            where: { id: decisionId },
-            include: {
-                repo: {
-                    select: { userId: true },
-                },
-            },
-        });
-
-        if (!existing) {
-            throw new NotFoundError('Decision');
-        }
-
-        if (existing.repo.userId !== userId) {
-            throw new NotFoundError('Decision');
-        }
-
-        // Update allowed fields
-        const updated = await prisma.decision.update({
-            where: { id: decisionId },
-            data: {
-                title: body.title ?? existing.title,
-                context: body.context ?? existing.context,
-                decision: body.decision ?? existing.decision,
-                consequences: body.consequences ?? existing.consequences,
-                impact: body.impact ?? existing.impact,
-            },
-        });
-
-        return NextResponse.json({
-            success: true,
-            decision: {
-                id: updated.id,
-                title: updated.title,
-                updatedAt: updated.updatedAt,
-            },
-        });
-
-    } catch (error) {
-        return handleError(error);
-    }
+  })(req)
 }

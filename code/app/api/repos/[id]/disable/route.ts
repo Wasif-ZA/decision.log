@@ -1,50 +1,52 @@
-// ===========================================
-// Disable Repo Tracking
-// ===========================================
-
-import { NextResponse } from 'next/server';
-import { requireAuth } from '@/lib/auth/requireAuth';
-import { requireRepoAccess } from '@/lib/auth/requireRepoAccess';
-import { handleError } from '@/lib/errors';
-import { prisma } from '@/lib/db';
-
-export const dynamic = 'force-dynamic';
-
-interface RouteParams {
-    params: Promise<{ id: string }>;
-}
-
 /**
+ * Disable Repository Tracking
+ *
  * POST /api/repos/[id]/disable
- * Disables tracking for a repository
+ * Disable tracking for a repository
  */
-export async function POST(request: Request, { params }: RouteParams) {
+
+import { NextRequest, NextResponse } from 'next/server'
+import { requireAuth } from '@/lib/auth/requireAuth'
+import { handleError } from '@/lib/errors'
+import { db } from '@/lib/db'
+
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  return requireAuth(async (request, { user }) => {
     try {
-        const { userId } = await requireAuth();
-        const { id: repoId } = await params;
+      const { id: repoId } = await params
 
-        // Verify user has access to this repo
-        await requireRepoAccess(userId, repoId);
+      // Update repo
+      const repo = await db.repo.update({
+        where: {
+          id: repoId,
+          userId: user.id,
+        },
+        data: {
+          enabled: false,
+        },
+      })
 
-        // Disable the repo
-        const repo = await prisma.repo.update({
-            where: { id: repoId },
-            data: {
-                isEnabled: false,
-            },
-            select: {
-                id: true,
-                fullName: true,
-                isEnabled: true,
-            },
-        });
-
-        return NextResponse.json({
-            success: true,
-            repo,
-        });
-
+      return NextResponse.json({
+        success: true,
+        repo: {
+          id: repo.id,
+          fullName: repo.fullName,
+          enabled: repo.enabled,
+        },
+      })
     } catch (error) {
-        return handleError(error);
+      const formatted = handleError(error)
+      return NextResponse.json(
+        {
+          code: formatted.code,
+          message: formatted.message,
+          details: formatted.details,
+        },
+        { status: formatted.statusCode }
+      )
     }
+  })(req)
 }

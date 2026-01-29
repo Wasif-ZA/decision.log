@@ -1,112 +1,89 @@
-// ===========================================
-// AES-256-GCM Encryption for Token Storage
-// ===========================================
-// Encrypts GitHub access tokens before storing in database
-// Requires ENCRYPTION_SECRET environment variable (min 32 chars)
-
-const ALGORITHM = 'AES-GCM';
-const KEY_LENGTH = 256;
-const IV_LENGTH = 12; // 96 bits for GCM
-const TAG_LENGTH = 128; // bits
-
 /**
- * Get the encryption key from environment variable
+ * Encryption Utilities
+ *
+ * AES-256-GCM encryption for GitHub tokens
  */
+
+import { webcrypto } from 'node:crypto'
+
+const crypto = webcrypto as unknown as Crypto
+
+// Derive encryption key from JWT_SECRET
 async function getEncryptionKey(): Promise<CryptoKey> {
-    const secret = process.env.ENCRYPTION_SECRET;
+  const secret = process.env.JWT_SECRET
+  if (!secret) {
+    throw new Error('JWT_SECRET environment variable is required')
+  }
 
-    if (!secret || secret.length < 32) {
-        throw new Error('ENCRYPTION_SECRET must be at least 32 characters');
-    }
+  // Convert secret to key material
+  const encoder = new TextEncoder()
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'PBKDF2' },
+    false,
+    ['deriveBits', 'deriveKey']
+  )
 
-    // Derive a key from the secret using PBKDF2
-    const encoder = new TextEncoder();
-    const keyMaterial = await crypto.subtle.importKey(
-        'raw',
-        encoder.encode(secret),
-        'PBKDF2',
-        false,
-        ['deriveKey']
-    );
-
-    return crypto.subtle.deriveKey(
-        {
-            name: 'PBKDF2',
-            salt: encoder.encode('decision.log.v1'), // Static salt for consistency
-            iterations: 100000,
-            hash: 'SHA-256',
-        },
-        keyMaterial,
-        { name: ALGORITHM, length: KEY_LENGTH },
-        false,
-        ['encrypt', 'decrypt']
-    );
+  // Derive AES-256-GCM key
+  return crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt: encoder.encode('decision-log-salt'),
+      iterations: 100000,
+      hash: 'SHA-256',
+    },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  )
 }
 
 /**
- * Encrypt a plaintext string
- * Returns base64 encoded string: iv:ciphertext:tag
+ * Encrypt a string using AES-256-GCM
  */
-export async function encrypt(plaintext: string): Promise<string> {
-    const key = await getEncryptionKey();
-    const encoder = new TextEncoder();
-    const data = encoder.encode(plaintext);
+export async function encrypt(
+  plaintext: string
+): Promise<{ encrypted: string; iv: string }> {
+  const key = await getEncryptionKey()
+  const encoder = new TextEncoder()
 
-    // Generate random IV
-    const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
+  // Generate random IV
+  const iv = crypto.getRandomValues(new Uint8Array(12))
 
-    // Encrypt
-    const encrypted = await crypto.subtle.encrypt(
-        {
-            name: ALGORITHM,
-            iv,
-            tagLength: TAG_LENGTH,
-        },
-        key,
-        data
-    );
+  // Encrypt
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    encoder.encode(plaintext)
+  )
 
-    // Combine IV and ciphertext (tag is appended automatically in WebCrypto)
-    const combined = new Uint8Array(iv.length + encrypted.byteLength);
-    combined.set(iv);
-    combined.set(new Uint8Array(encrypted), iv.length);
-
-    // Convert to base64
-    return btoa(String.fromCharCode(...combined));
+  return {
+    encrypted: Buffer.from(ciphertext).toString('base64'),
+    iv: Buffer.from(iv).toString('base64'),
+  }
 }
 
 /**
- * Decrypt a base64 encoded ciphertext
+ * Decrypt a string using AES-256-GCM
  */
-export async function decrypt(ciphertext: string): Promise<string> {
-    const key = await getEncryptionKey();
+export async function decrypt(
+  encrypted: string,
+  ivBase64: string
+): Promise<string> {
+  const key = await getEncryptionKey()
+  const decoder = new TextDecoder()
 
-    // Decode from base64
-    const combined = Uint8Array.from(atob(ciphertext), c => c.charCodeAt(0));
+  const iv = Buffer.from(ivBase64, 'base64')
+  const ciphertext = Buffer.from(encrypted, 'base64')
 
-    // Extract IV and ciphertext
-    const iv = combined.slice(0, IV_LENGTH);
-    const data = combined.slice(IV_LENGTH);
+  // Decrypt
+  const plaintext = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    ciphertext
+  )
 
-    // Decrypt
-    const decrypted = await crypto.subtle.decrypt(
-        {
-            name: ALGORITHM,
-            iv,
-            tagLength: TAG_LENGTH,
-        },
-        key,
-        data
-    );
-
-    const decoder = new TextDecoder();
-    return decoder.decode(decrypted);
-}
-
-/**
- * Check if encryption is properly configured
- */
-export function isEncryptionConfigured(): boolean {
-    const secret = process.env.ENCRYPTION_SECRET;
-    return !!secret && secret.length >= 32;
+  return decoder.decode(plaintext)
 }

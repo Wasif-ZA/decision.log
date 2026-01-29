@@ -1,71 +1,114 @@
-// ===========================================
-// Sync Cursor Management
-// ===========================================
-// Timestamp-based cursor with overlap for reliable incremental sync
-
-export interface SyncCursor {
-    prUpdatedAfter: string | null;  // ISO datetime
-    commitSince: string | null;     // ISO datetime
-}
-
-const CURSOR_OVERLAP_MINUTES = 120;
-
 /**
- * Parse a sync cursor from JSON
+ * Sync Cursor Management
+ *
+ * Manages cursor state for incremental syncing
+ * Cursor format: "pr:123" or "commit:abc123" or "timestamp:2024-01-01T00:00:00Z"
  */
-export function parseCursor(cursorJson: unknown): SyncCursor {
-    if (typeof cursorJson === 'object' && cursorJson !== null) {
-        const obj = cursorJson as Record<string, unknown>;
-        return {
-            prUpdatedAfter: typeof obj.prUpdatedAfter === 'string' ? obj.prUpdatedAfter : null,
-            commitSince: typeof obj.commitSince === 'string' ? obj.commitSince : null,
-        };
-    }
-    return { prUpdatedAfter: null, commitSince: null };
+
+export type CursorType = 'pr' | 'commit' | 'timestamp'
+
+export interface ParsedCursor {
+  type: CursorType
+  value: string
 }
 
 /**
- * Create a new cursor for the next sync
- * Includes overlap to handle items that may have been updated during the sync
+ * Parse a cursor string
  */
-export function getNextCursor(lastUpdated: Date): string {
-    const overlap = new Date(lastUpdated.getTime() - CURSOR_OVERLAP_MINUTES * 60 * 1000);
-    return overlap.toISOString();
+export function parseCursor(cursor: string | null): ParsedCursor | null {
+  if (!cursor) return null
+
+  const [type, value] = cursor.split(':', 2)
+
+  if (!type || !value) return null
+
+  if (type !== 'pr' && type !== 'commit' && type !== 'timestamp') {
+    return null
+  }
+
+  return { type, value }
 }
 
 /**
- * Get the initial cursor for first sync
- * Limits to FIRST_SYNC_DAYS back
+ * Create a cursor string
  */
-export function getInitialCursor(daysBack: number = 90): SyncCursor {
-    const since = new Date();
-    since.setDate(since.getDate() - daysBack);
-
-    return {
-        prUpdatedAfter: since.toISOString(),
-        commitSince: since.toISOString(),
-    };
+export function createCursor(type: CursorType, value: string | number): string {
+  return `${type}:${value}`
 }
 
 /**
- * Check if a date is after the cursor
+ * Get cursor for PR
  */
-export function isAfterCursor(date: Date | string, cursorDate: string | null): boolean {
-    if (!cursorDate) return true;
-
-    const d = typeof date === 'string' ? new Date(date) : date;
-    return d > new Date(cursorDate);
+export function createPRCursor(prNumber: number): string {
+  return createCursor('pr', prNumber)
 }
 
 /**
- * Merge cursor updates
+ * Get cursor for commit
  */
-export function mergeCursor(
-    existing: SyncCursor,
-    updates: Partial<SyncCursor>
-): SyncCursor {
-    return {
-        prUpdatedAfter: updates.prUpdatedAfter ?? existing.prUpdatedAfter,
-        commitSince: updates.commitSince ?? existing.commitSince,
-    };
+export function createCommitCursor(sha: string): string {
+  return createCursor('commit', sha)
+}
+
+/**
+ * Get cursor for timestamp
+ */
+export function createTimestampCursor(date: Date): string {
+  return createCursor('timestamp', date.toISOString())
+}
+
+/**
+ * Get latest cursor from a list of items
+ * For PRs: highest PR number
+ * For commits: most recent timestamp
+ */
+export function getLatestCursor(
+  items: Array<{ type: 'pr' | 'commit'; id: number | string; date: Date }>
+): string | null {
+  if (items.length === 0) return null
+
+  // If all PRs, use highest PR number
+  if (items.every((item) => item.type === 'pr')) {
+    const maxPR = Math.max(...items.map((item) => Number(item.id)))
+    return createPRCursor(maxPR)
+  }
+
+  // Otherwise use most recent timestamp
+  const mostRecent = items.reduce((latest, item) =>
+    item.date > latest.date ? item : latest
+  )
+
+  return createTimestampCursor(mostRecent.date)
+}
+
+/**
+ * Compare two cursors (for sorting/filtering)
+ */
+export function compareCursors(
+  a: string | null,
+  b: string | null
+): number {
+  if (!a && !b) return 0
+  if (!a) return -1
+  if (!b) return 1
+
+  const parsedA = parseCursor(a)
+  const parsedB = parseCursor(b)
+
+  if (!parsedA || !parsedB) return 0
+
+  // PR numbers: numeric comparison
+  if (parsedA.type === 'pr' && parsedB.type === 'pr') {
+    return Number(parsedA.value) - Number(parsedB.value)
+  }
+
+  // Timestamps: date comparison
+  if (parsedA.type === 'timestamp' && parsedB.type === 'timestamp') {
+    return (
+      new Date(parsedA.value).getTime() - new Date(parsedB.value).getTime()
+    )
+  }
+
+  // Mixed types: convert to timestamps
+  return 0
 }

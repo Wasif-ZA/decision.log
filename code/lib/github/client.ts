@@ -1,264 +1,339 @@
-// ===========================================
-// Rate-Limited GitHub API Client
-// ===========================================
-// Handles rate limiting, retries, and error handling for GitHub API
+/**
+ * GitHub API Client
+ *
+ * Wrapper for GitHub REST API with authentication and error handling
+ */
 
-import { prisma } from '@/lib/db';
-import { decrypt } from '@/lib/crypto';
-import { RateLimitError, RepoAccessError } from '@/lib/errors';
+import { GitHubError } from '@/lib/errors'
 
-const GITHUB_API_BASE = 'https://api.github.com';
-
-interface RateLimitInfo {
-    limit: number;
-    remaining: number;
-    reset: number; // Unix timestamp
+export interface GitHubPullRequest {
+  number: number
+  title: string
+  body: string | null
+  state: string
+  html_url: string
+  user: {
+    login: string
+  }
+  created_at: string
+  updated_at: string
+  merged_at: string | null
+  head: {
+    ref: string
+    sha: string
+  }
+  base: {
+    ref: string
+  }
+  additions: number
+  deletions: number
+  changed_files: number
 }
 
-interface GitHubPullRequest {
-    id: number;
-    number: number;
-    title: string;
-    body: string | null;
-    state: 'open' | 'closed';
-    merged: boolean;
-    merged_at: string | null;
-    created_at: string;
-    updated_at: string;
-    html_url: string;
-    user: { login: string } | null;
-    labels: Array<{ name: string }>;
-    additions?: number;
-    deletions?: number;
-    changed_files?: number;
-}
-
-interface GitHubCommit {
-    sha: string;
-    commit: {
-        message: string;
-        author: { name: string; date: string } | null;
-    };
-    html_url: string;
-    author: { login: string } | null;
-    stats?: { additions: number; deletions: number };
-    files?: Array<{ filename: string }>;
+export interface GitHubCommit {
+  sha: string
+  commit: {
+    message: string
+    author: {
+      name: string
+      date: string
+    }
+  }
+  html_url: string
+  author: {
+    login: string
+  } | null
+  stats?: {
+    additions: number
+    deletions: number
+    total: number
+  }
+  files?: Array<{
+    filename: string
+    status: string
+    additions: number
+    deletions: number
+    changes: number
+    patch?: string
+  }>
 }
 
 export class GitHubClient {
-    private accessToken: string;
-    private rateLimit: RateLimitInfo | null = null;
+  constructor(private token: string) {}
 
-    constructor(accessToken: string) {
-        this.accessToken = accessToken;
+  /**
+   * Fetch pull requests for a repository
+   */
+  async fetchPullRequests(
+    owner: string,
+    repo: string,
+    options: {
+      state?: 'open' | 'closed' | 'all'
+      sort?: 'created' | 'updated' | 'popularity'
+      direction?: 'asc' | 'desc'
+      per_page?: number
+      page?: number
+      since?: string // ISO timestamp
+    } = {}
+  ): Promise<GitHubPullRequest[]> {
+    const params = new URLSearchParams({
+      state: options.state ?? 'closed',
+      sort: options.sort ?? 'updated',
+      direction: options.direction ?? 'desc',
+      per_page: String(options.per_page ?? 100),
+      page: String(options.page ?? 1),
+    })
+
+    const url = `https://api.github.com/repos/${owner}/${repo}/pulls?${params}`
+
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        Accept: 'application/vnd.github.v3+json',
+      },
+    })
+
+    if (!response.ok) {
+      throw new GitHubError(
+        `Failed to fetch pull requests: ${response.statusText}`,
+        response.status
+      )
     }
 
-    /**
-     * Create a client for a user from their integration
-     */
-    static async forUser(userId: string): Promise<GitHubClient> {
-        const integration = await prisma.integration.findUnique({
-            where: { userId },
-        });
+    const prs: GitHubPullRequest[] = await response.json()
 
-        if (!integration) {
-            throw new Error('No GitHub integration found');
-        }
-
-        const accessToken = await decrypt(integration.accessTokenEncrypted);
-        return new GitHubClient(accessToken);
+    // Filter by since date if provided
+    if (options.since) {
+      const sinceDate = new Date(options.since)
+      return prs.filter((pr) => new Date(pr.updated_at) > sinceDate)
     }
 
-    /**
-     * Make a request to the GitHub API
-     */
-    private async request<T>(
-        path: string,
-        options: RequestInit = {}
-    ): Promise<T> {
-        // Check rate limit before making request
-        if (this.rateLimit && this.rateLimit.remaining <= 0) {
-            const resetIn = this.rateLimit.reset * 1000 - Date.now();
-            if (resetIn > 0) {
-                throw new RateLimitError(
-                    `GitHub rate limit exceeded. Resets in ${Math.ceil(resetIn / 1000)}s`,
-                    Math.ceil(resetIn / 1000)
-                );
-            }
-        }
+    return prs
+  }
 
-        const url = path.startsWith('http') ? path : `${GITHUB_API_BASE}${path}`;
+  /**
+   * Fetch a single pull request with full details
+   */
+  async fetchPullRequest(
+    owner: string,
+    repo: string,
+    prNumber: number
+  ): Promise<GitHubPullRequest> {
+    const url = `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`
 
-        const response = await fetch(url, {
-            ...options,
-            headers: {
-                Authorization: `Bearer ${this.accessToken}`,
-                Accept: 'application/vnd.github.v3+json',
-                ...options.headers,
-            },
-        });
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        Accept: 'application/vnd.github.v3+json',
+      },
+    })
 
-        // Update rate limit info from headers
-        const limit = response.headers.get('x-ratelimit-limit');
-        const remaining = response.headers.get('x-ratelimit-remaining');
-        const reset = response.headers.get('x-ratelimit-reset');
-
-        if (limit && remaining && reset) {
-            this.rateLimit = {
-                limit: parseInt(limit, 10),
-                remaining: parseInt(remaining, 10),
-                reset: parseInt(reset, 10),
-            };
-        }
-
-        // Handle errors
-        if (!response.ok) {
-            if (response.status === 403) {
-                const rateLimitRemaining = response.headers.get('x-ratelimit-remaining');
-                if (rateLimitRemaining === '0') {
-                    const resetAt = parseInt(reset || '0', 10) * 1000;
-                    const retryAfter = Math.ceil((resetAt - Date.now()) / 1000);
-                    throw new RateLimitError('GitHub API rate limit exceeded', retryAfter);
-                }
-                throw new RepoAccessError('revoked');
-            }
-
-            if (response.status === 404) {
-                throw new RepoAccessError('not_found');
-            }
-
-            if (response.status === 401) {
-                throw new Error('GitHub token is invalid or expired');
-            }
-
-            throw new Error(`GitHub API error: ${response.status}`);
-        }
-
-        return response.json();
+    if (!response.ok) {
+      throw new GitHubError(
+        `Failed to fetch pull request: ${response.statusText}`,
+        response.status
+      )
     }
 
-    /**
-     * Get rate limit status
-     */
-    getRateLimit(): RateLimitInfo | null {
-        return this.rateLimit;
+    return response.json()
+  }
+
+  /**
+   * Fetch commits for a repository
+   */
+  async fetchCommits(
+    owner: string,
+    repo: string,
+    options: {
+      sha?: string // branch/tag/SHA
+      since?: string // ISO timestamp
+      until?: string // ISO timestamp
+      per_page?: number
+      page?: number
+    } = {}
+  ): Promise<GitHubCommit[]> {
+    const params = new URLSearchParams({
+      per_page: String(options.per_page ?? 100),
+      page: String(options.page ?? 1),
+    })
+
+    if (options.sha) params.set('sha', options.sha)
+    if (options.since) params.set('since', options.since)
+    if (options.until) params.set('until', options.until)
+
+    const url = `https://api.github.com/repos/${owner}/${repo}/commits?${params}`
+
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        Accept: 'application/vnd.github.v3+json',
+      },
+    })
+
+    if (!response.ok) {
+      throw new GitHubError(
+        `Failed to fetch commits: ${response.statusText}`,
+        response.status
+      )
     }
 
-    /**
-     * List pull requests for a repo
-     */
-    async listPullRequests(
-        owner: string,
-        repo: string,
-        options: {
-            state?: 'open' | 'closed' | 'all';
-            sort?: 'created' | 'updated' | 'popularity' | 'long-running';
-            direction?: 'asc' | 'desc';
-            perPage?: number;
-            page?: number;
-        } = {}
-    ): Promise<GitHubPullRequest[]> {
-        const {
-            state = 'all',
-            sort = 'updated',
-            direction = 'desc',
-            perPage = 100,
-            page = 1,
-        } = options;
+    return response.json()
+  }
 
-        const params = new URLSearchParams({
-            state,
-            sort,
-            direction,
-            per_page: String(perPage),
-            page: String(page),
-        });
+  /**
+   * Fetch a single commit with full details including diff
+   */
+  async fetchCommit(
+    owner: string,
+    repo: string,
+    sha: string
+  ): Promise<GitHubCommit> {
+    const url = `https://api.github.com/repos/${owner}/${repo}/commits/${sha}`
 
-        return this.request<GitHubPullRequest[]>(
-            `/repos/${owner}/${repo}/pulls?${params}`
-        );
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        Accept: 'application/vnd.github.v3+json',
+      },
+    })
+
+    if (!response.ok) {
+      throw new GitHubError(
+        `Failed to fetch commit: ${response.statusText}`,
+        response.status
+      )
     }
 
-    /**
-     * Get a single pull request with full details
-     */
-    async getPullRequest(
-        owner: string,
-        repo: string,
-        prNumber: number
-    ): Promise<GitHubPullRequest> {
-        return this.request<GitHubPullRequest>(
-            `/repos/${owner}/${repo}/pulls/${prNumber}`
-        );
+    return response.json()
+  }
+
+  /**
+   * Fetch diff for a pull request
+   */
+  async fetchPullRequestDiff(
+    owner: string,
+    repo: string,
+    prNumber: number
+  ): Promise<string> {
+    const url = `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`
+
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        Accept: 'application/vnd.github.v3.diff',
+      },
+    })
+
+    if (!response.ok) {
+      throw new GitHubError(
+        `Failed to fetch PR diff: ${response.statusText}`,
+        response.status
+      )
     }
 
-    /**
-     * Get files changed in a PR
-     */
-    async getPullRequestFiles(
-        owner: string,
-        repo: string,
-        prNumber: number
-    ): Promise<Array<{ filename: string; additions: number; deletions: number }>> {
-        return this.request<Array<{ filename: string; additions: number; deletions: number }>>(
-            `/repos/${owner}/${repo}/pulls/${prNumber}/files?per_page=100`
-        );
+    return response.text()
+  }
+
+  /**
+   * Fetch files changed in a pull request
+   */
+  async fetchPullRequestFiles(
+    owner: string,
+    repo: string,
+    prNumber: number
+  ): Promise<
+    Array<{
+      filename: string
+      status: string
+      additions: number
+      deletions: number
+      changes: number
+      patch?: string
+    }>
+  > {
+    const url = `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/files`
+
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        Accept: 'application/vnd.github.v3+json',
+      },
+    })
+
+    if (!response.ok) {
+      throw new GitHubError(
+        `Failed to fetch PR files: ${response.statusText}`,
+        response.status
+      )
     }
 
-    /**
-     * List commits for a repo
-     */
-    async listCommits(
-        owner: string,
-        repo: string,
-        options: {
-            sha?: string;
-            since?: string;
-            until?: string;
-            perPage?: number;
-            page?: number;
-        } = {}
-    ): Promise<GitHubCommit[]> {
-        const { sha, since, until, perPage = 100, page = 1 } = options;
+    return response.json()
+  }
 
-        const params = new URLSearchParams({
-            per_page: String(perPage),
-            page: String(page),
-        });
+  /**
+   * Check API rate limit
+   */
+  async checkRateLimit(): Promise<{
+    limit: number
+    remaining: number
+    reset: Date
+    used: number
+  }> {
+    const url = 'https://api.github.com/rate_limit'
 
-        if (sha) params.set('sha', sha);
-        if (since) params.set('since', since);
-        if (until) params.set('until', until);
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        Accept: 'application/vnd.github.v3+json',
+      },
+    })
 
-        return this.request<GitHubCommit[]>(
-            `/repos/${owner}/${repo}/commits?${params}`
-        );
+    if (!response.ok) {
+      throw new GitHubError(
+        `Failed to check rate limit: ${response.statusText}`,
+        response.status
+      )
     }
 
-    /**
-     * Get a single commit with full details
-     */
-    async getCommit(
-        owner: string,
-        repo: string,
-        sha: string
-    ): Promise<GitHubCommit> {
-        return this.request<GitHubCommit>(
-            `/repos/${owner}/${repo}/commits/${sha}`
-        );
+    const data = await response.json()
+
+    return {
+      limit: data.rate.limit,
+      remaining: data.rate.remaining,
+      reset: new Date(data.rate.reset * 1000),
+      used: data.rate.used,
+    }
+  }
+
+  /**
+   * Fetch repository info
+   */
+  async fetchRepository(
+    owner: string,
+    repo: string
+  ): Promise<{
+    id: number
+    name: string
+    full_name: string
+    private: boolean
+    default_branch: string
+  }> {
+    const url = `https://api.github.com/repos/${owner}/${repo}`
+
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        Accept: 'application/vnd.github.v3+json',
+      },
+    })
+
+    if (!response.ok) {
+      throw new GitHubError(
+        `Failed to fetch repository: ${response.statusText}`,
+        response.status
+      )
     }
 
-    /**
-     * Verify the token is still valid
-     */
-    async verifyToken(): Promise<boolean> {
-        try {
-            await this.request('/user');
-            return true;
-        } catch {
-            return false;
-        }
-    }
+    return response.json()
+  }
 }
-
-export type { GitHubPullRequest, GitHubCommit, RateLimitInfo };

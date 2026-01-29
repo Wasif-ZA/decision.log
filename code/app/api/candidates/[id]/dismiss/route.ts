@@ -1,87 +1,46 @@
-// ===========================================
-// Dismiss Candidate Route
-// ===========================================
-
-import { NextResponse } from 'next/server';
-import { requireAuth } from '@/lib/auth/requireAuth';
-import { handleError, NotFoundError, ValidationError } from '@/lib/errors';
-import { prisma } from '@/lib/db';
-import { validateJsonBody } from '@/lib/validation';
-import { z } from 'zod';
-
-export const dynamic = 'force-dynamic';
-
-interface RouteParams {
-    params: Promise<{ id: string }>;
-}
-
-const DismissSchema = z.object({
-    reason: z.enum(['not_decision', 'too_minor', 'duplicate', 'incorrect', 'other']),
-    note: z.string().max(500).optional(),
-});
-
 /**
+ * Dismiss Candidate
+ *
  * POST /api/candidates/[id]/dismiss
- * Dismiss a candidate with a reason
+ * Mark a candidate as dismissed (not an architectural decision)
  */
-export async function POST(request: Request, { params }: RouteParams) {
+
+import { NextRequest, NextResponse } from 'next/server'
+import { requireAuth } from '@/lib/auth/requireAuth'
+import { handleError } from '@/lib/errors'
+import { db } from '@/lib/db'
+
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  return requireAuth(async (request, { user }) => {
     try {
-        const { userId } = await requireAuth();
-        const { id: candidateId } = await params;
+      const { id: candidateId } = await params
 
-        // Validate body
-        const body = await validateJsonBody(request, DismissSchema);
+      // Update candidate
+      const candidate = await db.candidate.update({
+        where: {
+          id: candidateId,
+          userId: user.id,
+        },
+        data: {
+          status: 'dismissed',
+          dismissedAt: new Date(),
+        },
+      })
 
-        // Get candidate with repo info
-        const candidate = await prisma.candidate.findUnique({
-            where: { id: candidateId },
-            include: {
-                repo: {
-                    select: {
-                        userId: true,
-                    },
-                },
-            },
-        });
-
-        if (!candidate) {
-            throw new NotFoundError('Candidate');
-        }
-
-        // Verify user owns the repo
-        if (candidate.repo.userId !== userId) {
-            throw new NotFoundError('Candidate');
-        }
-
-        // Check if already processed
-        if (candidate.status !== 'new') {
-            return NextResponse.json({
-                success: false,
-                error: `Candidate already ${candidate.status}`,
-            }, { status: 400 });
-        }
-
-        // Update candidate
-        const updated = await prisma.candidate.update({
-            where: { id: candidateId },
-            data: {
-                status: 'dismissed',
-                dismissedAt: new Date(),
-                dismissReason: body.reason,
-                dismissNote: body.note,
-            },
-        });
-
-        return NextResponse.json({
-            success: true,
-            candidate: {
-                id: updated.id,
-                status: updated.status,
-                dismissReason: updated.dismissReason,
-            },
-        });
-
+      return NextResponse.json({ success: true, candidate })
     } catch (error) {
-        return handleError(error);
+      const formatted = handleError(error)
+      return NextResponse.json(
+        {
+          code: formatted.code,
+          message: formatted.message,
+          details: formatted.details,
+        },
+        { status: formatted.statusCode }
+      )
     }
+  })(req)
 }

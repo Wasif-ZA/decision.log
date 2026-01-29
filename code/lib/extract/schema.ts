@@ -1,103 +1,191 @@
-// ===========================================
-// LLM Extraction Schemas
-// ===========================================
+/**
+ * Extraction Schema
+ *
+ * Zod schemas for LLM extraction validation
+ * Ensures LLM responses match our Decision model
+ */
 
-import { z } from 'zod';
+import { z } from 'zod'
 
-// Schema for a single extracted decision
-export const ExtractedDecisionSchema = z.object({
-    isDecision: z.boolean(),
-    title: z.string().max(200),
-    summary: z.string().max(500),
-    context: z.string().max(1000).optional(),
-    decision: z.string().max(1000).optional(),
-    consequences: z.string().max(500).optional(),
-    confidence: z.number().min(0).max(1),
-    impact: z.enum(['low', 'medium', 'high']).optional(),
-    risk: z.enum(['low', 'medium', 'high']).optional(),
-    suggestedTags: z.array(z.string().max(50)).max(5).optional(),
-});
+/**
+ * Schema for a single decision extraction
+ */
+export const DecisionExtractionSchema = z.object({
+  title: z
+    .string()
+    .min(10)
+    .max(200)
+    .describe('Brief title of the architectural decision'),
 
-// Schema for batch extraction response
-export const ExtractionResponseSchema = z.object({
-    items: z.array(ExtractedDecisionSchema),
-});
+  context: z
+    .string()
+    .min(50)
+    .max(2000)
+    .describe(
+      'Context: What problem or situation led to this decision? What constraints existed?'
+    ),
 
-// Wrapped version for OpenAI (requires object wrapper)
-export const OpenAIExtractionResponseSchema = z.object({
-    items: z.array(ExtractedDecisionSchema),
-});
+  decision: z
+    .string()
+    .min(50)
+    .max(2000)
+    .describe('Decision: What was decided? What approach was chosen?'),
 
-export type ExtractedDecision = z.infer<typeof ExtractedDecisionSchema>;
-export type ExtractionResponse = z.infer<typeof ExtractionResponseSchema>;
+  reasoning: z
+    .string()
+    .min(50)
+    .max(2000)
+    .describe(
+      'Reasoning: Why was this approach chosen? What factors influenced the decision?'
+    ),
 
-// Extraction prompt
-export const EXTRACTION_PROMPT = `You are an expert at identifying architectural decisions and technical choices from software development artifacts.
+  consequences: z
+    .string()
+    .min(50)
+    .max(2000)
+    .describe(
+      'Consequences: What are the implications? What trade-offs were made?'
+    ),
 
-Analyze the following PR/commit and determine if it represents a meaningful technical or architectural decision.
+  alternatives: z
+    .string()
+    .max(2000)
+    .optional()
+    .describe(
+      'Alternatives: What other options were considered? (Optional)'
+    ),
 
-A decision is:
-- A choice between alternatives (frameworks, patterns, approaches)
-- An architectural change or migration
-- A significant refactoring with clear rationale
-- A deprecation or removal with reasoning
-- A new pattern or standard being established
+  tags: z
+    .array(z.string())
+    .min(1)
+    .max(5)
+    .describe(
+      'Tags: 1-5 tags categorizing the decision (e.g., architecture, security, performance)'
+    ),
 
-A decision is NOT:
-- A bug fix without broader implications
-- A routine feature addition
-- Minor refactoring without strategic intent
-- Dependency updates without significant changes
+  significance: z
+    .number()
+    .min(0)
+    .max(1)
+    .describe(
+      'Significance: 0.0-1.0 indicating the impact and importance of this decision'
+    ),
+})
 
-For each artifact, extract:
-1. isDecision: true if this represents a real decision, false otherwise
-2. title: A clear, concise title for the decision (if isDecision is true)
-3. summary: Brief summary of what was decided (if isDecision is true)
-4. context: What problem or situation led to this decision (if applicable)
-5. decision: The actual choice that was made and why (if applicable)
-6. consequences: What are the implications or trade-offs (if applicable)
-7. confidence: Your confidence (0-1) that this is a real decision
-8. impact: low/medium/high - how significant is this decision
-9. risk: low/medium/high - what's the risk level of this decision
-10. suggestedTags: Up to 5 relevant tags (e.g., "authentication", "database", "performance")
+export type DecisionExtraction = z.infer<typeof DecisionExtractionSchema>
 
-Respond with a JSON object containing an "items" array with one entry per artifact analyzed.`;
+/**
+ * Schema for batch extraction response
+ */
+export const BatchExtractionSchema = z.object({
+  decisions: z.array(DecisionExtractionSchema),
+  metadata: z
+    .object({
+      totalProcessed: z.number(),
+      successfulExtractions: z.number(),
+      failedExtractions: z.number(),
+    })
+    .optional(),
+})
 
-// Format artifact for LLM context
-export function formatArtifactForLLM(artifact: {
-    type: string;
-    title: string;
-    body: string | null;
-    labels: string[];
-    filePaths: string[];
-    additions?: number | null;
-    deletions?: number | null;
-}): string {
-    const parts = [
-        `Type: ${artifact.type}`,
-        `Title: ${artifact.title}`,
-    ];
+export type BatchExtraction = z.infer<typeof BatchExtractionSchema>
 
-    if (artifact.body) {
-        // Truncate body to ~2000 chars
-        const truncatedBody = artifact.body.length > 2000
-            ? artifact.body.substring(0, 2000) + '...'
-            : artifact.body;
-        parts.push(`Description:\n${truncatedBody}`);
-    }
+/**
+ * System prompt for extraction
+ */
+export const EXTRACTION_SYSTEM_PROMPT = `You are an expert software architect analyzing Git history to extract architectural decision records (ADRs).
 
-    if (artifact.labels.length > 0) {
-        parts.push(`Labels: ${artifact.labels.join(', ')}`);
-    }
+Your task: Extract architectural decisions from pull requests and commits.
 
-    if (artifact.filePaths.length > 0) {
-        const files = artifact.filePaths.slice(0, 20).join('\n  ');
-        parts.push(`Files changed:\n  ${files}`);
-    }
+Guidelines:
+1. Focus on WHY decisions were made, not just WHAT changed
+2. Identify trade-offs and consequences
+3. Note alternatives that were considered
+4. Assess the significance and impact
+5. Be concise but comprehensive
+6. If no significant architectural decision exists, return null for that PR
 
-    if (artifact.additions || artifact.deletions) {
-        parts.push(`Changes: +${artifact.additions ?? 0} -${artifact.deletions ?? 0}`);
-    }
+Output format: JSON matching the DecisionExtraction schema.`
 
-    return parts.join('\n\n');
+/**
+ * User prompt template for extraction
+ */
+export function createExtractionPrompt(artifacts: Array<{
+  number: number
+  title: string
+  body: string | null
+  diff: string | null
+  author: string
+  mergedAt: Date | null
+}>): string {
+  const artifactDescriptions = artifacts
+    .map(
+      (a, i) => `
+## Artifact ${i + 1}: ${a.title}
+
+**Author:** ${a.author}
+**Merged:** ${a.mergedAt?.toISOString() ?? 'Not merged'}
+
+**Description:**
+${a.body ?? 'No description provided'}
+
+**Diff (truncated):**
+\`\`\`diff
+${a.diff?.slice(0, 5000) ?? 'No diff available'}
+\`\`\`
+`
+    )
+    .join('\n---\n')
+
+  return `Extract architectural decisions from these Git artifacts:
+
+${artifactDescriptions}
+
+For each artifact, determine if it represents a significant architectural decision. If yes, extract:
+- **Title**: Brief, descriptive title
+- **Context**: Why was this decision needed?
+- **Decision**: What was decided?
+- **Reasoning**: Why this approach?
+- **Consequences**: What are the implications?
+- **Alternatives**: What else was considered? (optional)
+- **Tags**: Relevant categories
+- **Significance**: 0.0-1.0 impact score
+
+Return a JSON object with a "decisions" array. Include only artifacts that represent meaningful architectural decisions.`
+}
+
+/**
+ * Token cost estimates (approximate)
+ */
+export const TOKEN_COSTS = {
+  // Claude Sonnet 4 (primary)
+  'claude-sonnet-4': {
+    input: 3.0 / 1_000_000, // $3 per 1M tokens
+    output: 15.0 / 1_000_000, // $15 per 1M tokens
+  },
+  // GPT-4o (fallback)
+  'gpt-4o': {
+    input: 2.5 / 1_000_000, // $2.50 per 1M tokens
+    output: 10.0 / 1_000_000, // $10 per 1M tokens
+  },
+}
+
+/**
+ * Estimate tokens for a string (rough approximation)
+ */
+export function estimateTokens(text: string): number {
+  // Rough estimate: 1 token ≈ 4 characters
+  return Math.ceil(text.length / 4)
+}
+
+/**
+ * Calculate cost for an extraction
+ */
+export function calculateCost(
+  model: 'claude-sonnet-4' | 'gpt-4o',
+  inputTokens: number,
+  outputTokens: number
+): number {
+  const costs = TOKEN_COSTS[model]
+  return inputTokens * costs.input + outputTokens * costs.output
 }

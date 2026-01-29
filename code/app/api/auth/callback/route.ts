@@ -1,17 +1,13 @@
 // ===========================================
 // GitHub OAuth Callback
 // ===========================================
-// Exchanges code for token, creates/updates User and Integration,
-// encrypts and stores access token in database
 
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { signJWT, getSessionCookieOptions, SESSION_COOKIE_NAME, OAUTH_STATE_COOKIE_NAME } from '@/lib/jwt';
-import { prisma } from '@/lib/db';
+import { db } from '@/lib/db';
 import { encrypt } from '@/lib/crypto';
-
-// Transaction client type (excludes methods not available in transactions)
-type TransactionClient = Omit<typeof prisma, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>;
+import { logError } from '@/lib/errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -88,75 +84,45 @@ export async function GET(request: Request) {
 
         const userData = await userResponse.json();
 
-        // Encrypt the access token before storing
-        const encryptedToken = await encrypt(accessToken);
+        // Encrypt GitHub token
+        const { encrypted, iv } = await encrypt(accessToken);
 
-        // Parse scopes into array
-        const tokenScopes = scope ? scope.split(',').map((s: string) => s.trim()) : [];
-
-        // Upsert User and Integration in a transaction
-        const user = await prisma.$transaction(async (tx: TransactionClient) => {
-            // Create or update User
-            const user = await tx.user.upsert({
-                where: { githubId: String(userData.id) },
-                update: {
-                    login: userData.login,
-                    email: userData.email,
-                    name: userData.name,
-                    avatarUrl: userData.avatar_url,
+        // Create or update user in database
+        const user = await db.user.upsert({
+            where: { githubId: userData.id },
+            create: {
+                githubId: userData.id,
+                login: userData.login,
+                name: userData.name,
+                email: userData.email,
+                avatarUrl: userData.avatar_url,
+                githubTokenEncrypted: encrypted,
+                githubTokenIv: iv,
+            },
+            update: {
+                login: userData.login,
+                name: userData.name,
+                email: userData.email,
+                avatarUrl: userData.avatar_url,
+                githubTokenEncrypted: encrypted,
+                githubTokenIv: iv,
+            },
+            include: {
+                repos: {
+                    where: { enabled: true },
+                    select: { id: true },
                 },
-                create: {
-                    githubId: String(userData.id),
-                    login: userData.login,
-                    email: userData.email,
-                    name: userData.name,
-                    avatarUrl: userData.avatar_url,
-                },
-            });
-
-            // Create or update Integration with encrypted token
-            await tx.integration.upsert({
-                where: { userId: user.id },
-                update: {
-                    accessTokenEncrypted: encryptedToken,
-                    tokenScopes,
-                    tokenType: tokenType || 'bearer',
-                    isValid: true,
-                    lastValidatedAt: new Date(),
-                    invalidReason: null,
-                },
-                create: {
-                    userId: user.id,
-                    accessTokenEncrypted: encryptedToken,
-                    tokenScopes,
-                    tokenType: tokenType || 'bearer',
-                    isValid: true,
-                    lastValidatedAt: new Date(),
-                },
-            });
-
-            return user;
+            },
         });
 
-        // Check if user has any enabled repos (determines setupComplete)
-        const enabledRepoCount = await prisma.repo.count({
-            where: { userId: user.id, isEnabled: true },
-        });
-
-        const isNewUser = enabledRepoCount === 0;
-
-        // Fetch tracked repo IDs if any
-        const trackedRepos = await prisma.repo.findMany({
-            where: { userId: user.id, isEnabled: true },
-            select: { id: true },
-        });
-
-        const trackedRepoIds = trackedRepos.map((r: { id: string }) => r.id);
+        // Check if this is a new user (no enabled repos)
+        const isNewUser = user.repos.length === 0;
+        const trackedRepoIds = user.repos.map((r) => r.id);
 
         // Sign JWT
         const jwt = await signJWT({
-            sub: String(userData.id),
-            login: userData.login,
+            sub: user.id,
+            login: user.login,
             setupComplete: !isNewUser,
             trackedRepoIds,
         });
@@ -168,11 +134,11 @@ export async function GET(request: Request) {
         cookieStore.set(SESSION_COOKIE_NAME, jwt, cookieOptions);
 
         // Redirect based on setup status
-        const redirectTo = isNewUser ? '/setup' : '/timeline';
+        const redirectTo = isNewUser ? '/setup' : '/app/timeline';
         return NextResponse.redirect(new URL(redirectTo, request.url));
 
     } catch (error) {
-        console.error('OAuth callback error:', error);
+        logError(error, 'OAuth callback');
         return NextResponse.redirect(new URL('/login?error=callback_error', request.url));
     }
 }

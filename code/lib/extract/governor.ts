@@ -1,112 +1,188 @@
-// ===========================================
-// Extraction Cost Governor
-// ===========================================
+/**
+ * Cost Governor
+ *
+ * Enforces daily extraction limits per repository
+ * Prevents runaway LLM costs
+ */
 
-import { prisma } from '@/lib/db';
+import { db } from '@/lib/db'
+import { RateLimitError } from '@/lib/errors'
 
-export const DAILY_EXTRACTION_LIMIT = 20;  // Max LLM calls per repo per day
-export const BATCH_SIZE = 5;               // Artifacts per LLM call
-export const FIRST_SYNC_PR_CAP = 100;      // Max PRs on initial sync
-export const FIRST_SYNC_DAYS = 90;         // Max days back
+const DAILY_EXTRACTION_LIMIT = 20 // Max 20 extractions per repo per day
+const BATCH_SIZE = 5 // Process 5 PRs per extraction call
 
-interface GovernorResult {
-    allowed: boolean;
-    remaining: number;
-    resetAt: Date | null;
-    message?: string;
+export interface CostStats {
+  todayCount: number
+  todayCost: number
+  remainingToday: number
+  totalCost: number
+  totalExtractions: number
 }
 
 /**
- * Check if extraction is allowed for a repo
+ * Check if extraction is allowed for a repository
  */
-export async function checkExtractionBudget(repoId: string): Promise<GovernorResult> {
-    const repo = await prisma.repo.findUnique({
-        where: { id: repoId },
-        select: {
-            extractionsToday: true,
-            extractionResetAt: true,
-        },
-    });
+export async function checkExtractionLimit(
+  repoId: string
+): Promise<{
+  allowed: boolean
+  stats: CostStats
+}> {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
 
-    if (!repo) {
-        return {
-            allowed: false,
-            remaining: 0,
-            resetAt: null,
-            message: 'Repo not found',
-        };
-    }
+  const tomorrow = new Date(today)
+  tomorrow.setDate(tomorrow.getDate() + 1)
 
-    const now = new Date();
-    const resetAt = repo.extractionResetAt;
+  // Get today's extractions
+  const todayExtractions = await db.extractionCost.findMany({
+    where: {
+      repoId,
+      extractedAt: {
+        gte: today,
+        lt: tomorrow,
+      },
+    },
+  })
 
-    // Check if we need to reset the counter
-    if (!resetAt || resetAt < now) {
-        // Reset the counter
-        const newResetAt = new Date(now);
-        newResetAt.setHours(24, 0, 0, 0); // Midnight next day
+  const todayCount = todayExtractions.reduce(
+    (sum, e) => sum + e.batchSize,
+    0
+  )
+  const todayCost = todayExtractions.reduce((sum, e) => sum + e.totalCost, 0)
 
-        await prisma.repo.update({
-            where: { id: repoId },
-            data: {
-                extractionsToday: 0,
-                extractionResetAt: newResetAt,
-            },
-        });
+  // Get all-time stats
+  const allTime = await db.extractionCost.aggregate({
+    where: { repoId },
+    _sum: {
+      totalCost: true,
+      batchSize: true,
+    },
+  })
 
-        return {
-            allowed: true,
-            remaining: DAILY_EXTRACTION_LIMIT,
-            resetAt: newResetAt,
-        };
-    }
+  const totalCost = allTime._sum.totalCost ?? 0
+  const totalExtractions = allTime._sum.batchSize ?? 0
 
-    const remaining = DAILY_EXTRACTION_LIMIT - repo.extractionsToday;
+  const stats: CostStats = {
+    todayCount,
+    todayCost,
+    remainingToday: Math.max(DAILY_EXTRACTION_LIMIT - todayCount, 0),
+    totalCost,
+    totalExtractions,
+  }
 
-    if (remaining <= 0) {
-        return {
-            allowed: false,
-            remaining: 0,
-            resetAt,
-            message: `Daily extraction limit reached. Resets at ${resetAt.toISOString()}`,
-        };
-    }
-
-    return {
-        allowed: true,
-        remaining,
-        resetAt,
-    };
+  return {
+    allowed: todayCount < DAILY_EXTRACTION_LIMIT,
+    stats,
+  }
 }
 
 /**
- * Increment the extraction counter
+ * Record extraction cost
  */
-export async function incrementExtractionCount(
-    repoId: string,
-    count: number = 1
+export async function recordExtractionCost(
+  repoId: string,
+  userId: string,
+  options: {
+    model: string
+    inputTokens: number
+    outputTokens: number
+    totalCost: number
+    batchSize: number
+    candidateIds: string[]
+  }
 ): Promise<void> {
-    await prisma.repo.update({
-        where: { id: repoId },
-        data: {
-            extractionsToday: {
-                increment: count,
-            },
-        },
-    });
+  await db.extractionCost.create({
+    data: {
+      repoId,
+      userId,
+      model: options.model,
+      inputTokens: options.inputTokens,
+      outputTokens: options.outputTokens,
+      totalCost: options.totalCost,
+      batchSize: options.batchSize,
+      candidateIds: options.candidateIds,
+    },
+  })
 }
 
 /**
- * Get how many artifacts can be extracted this run
+ * Get cost stats for a repository
  */
-export async function getAvailableExtractionSlots(repoId: string): Promise<number> {
-    const budget = await checkExtractionBudget(repoId);
+export async function getCostStats(repoId: string): Promise<CostStats> {
+  const { stats } = await checkExtractionLimit(repoId)
+  return stats
+}
 
-    if (!budget.allowed) {
-        return 0;
+/**
+ * Get cost stats for a user (across all repos)
+ */
+export async function getUserCostStats(userId: string): Promise<{
+  totalCost: number
+  totalExtractions: number
+  repoBreakdown: Array<{
+    repoId: string
+    repoName: string
+    cost: number
+    extractions: number
+  }>
+}> {
+  const costs = await db.extractionCost.findMany({
+    where: { userId },
+    include: {
+      repo: {
+        select: {
+          id: true,
+          fullName: true,
+        },
+      },
+    },
+  })
+
+  const totalCost = costs.reduce((sum, c) => sum + c.totalCost, 0)
+  const totalExtractions = costs.reduce((sum, c) => sum + c.batchSize, 0)
+
+  // Group by repo
+  const repoMap = new Map<
+    string,
+    { repoId: string; repoName: string; cost: number; extractions: number }
+  >()
+
+  for (const cost of costs) {
+    const existing = repoMap.get(cost.repoId)
+
+    if (existing) {
+      existing.cost += cost.totalCost
+      existing.extractions += cost.batchSize
+    } else {
+      repoMap.set(cost.repoId, {
+        repoId: cost.repoId,
+        repoName: cost.repo.fullName,
+        cost: cost.totalCost,
+        extractions: cost.batchSize,
+      })
     }
+  }
 
-    // Each LLM call processes BATCH_SIZE artifacts
-    // Return total artifacts we can process
-    return Math.min(budget.remaining * BATCH_SIZE, FIRST_SYNC_PR_CAP);
+  return {
+    totalCost,
+    totalExtractions,
+    repoBreakdown: Array.from(repoMap.values()),
+  }
+}
+
+/**
+ * Enforce extraction limit (throws if exceeded)
+ */
+export async function enforceExtractionLimit(
+  repoId: string
+): Promise<void> {
+  const { allowed, stats } = await checkExtractionLimit(repoId)
+
+  if (!allowed) {
+    throw new RateLimitError(
+      `Daily extraction limit reached for this repository (${DAILY_EXTRACTION_LIMIT}/day). Resets tomorrow.`,
+      24 * 60 * 60 * 1000 // 24 hours in ms
+    )
+  }
 }

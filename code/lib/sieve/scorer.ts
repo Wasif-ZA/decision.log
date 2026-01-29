@@ -1,218 +1,329 @@
-// ===========================================
-// Artifact Sieve - Rule-Based Scoring
-// ===========================================
-// Scores artifacts 0-100, threshold=45 to pass
+/**
+ * Sieve Scorer
+ *
+ * Rule-based scoring system to filter noise and identify
+ * high-significance architectural decisions
+ *
+ * Score: 0.0 (noise) to 1.0 (highly significant)
+ * Threshold: 0.4 for candidate promotion
+ */
 
-import { prisma } from '@/lib/db';
-import type { Artifact } from '@prisma/client';
+import type { Artifact } from '@prisma/client'
 
-const SIEVE_THRESHOLD = 45;
-
-interface SieveRule {
-    name: string;
-    score: number;
-    match: (artifact: Artifact) => boolean;
+export interface SieveScore {
+  total: number // 0.0 - 1.0
+  breakdown: {
+    commitScore: number
+    prScore: number
+    diffScore: number
+  }
+  details: {
+    signals: string[]
+    penalties: string[]
+    reasoning: string
+  }
 }
 
-// Decision-indicating keywords
-const DECISION_KEYWORDS = [
-    'decide', 'decision', 'chose', 'choose', 'choosing',
-    'architecture', 'design', 'pattern', 'approach',
-    'trade-off', 'tradeoff', 'trade off',
-    'why we', 'reason for', 'rationale',
-    'migration', 'migrate', 'refactor',
-    'breaking change', 'deprecate', 'deprecation',
-    'replace', 'replacing', 'replaced',
-    'switch to', 'switched to', 'switching',
-    'adopt', 'adopting', 'adopted',
-    'introduce', 'introducing', 'introduced',
-    'remove', 'removing', 'removed',
-    'standardize', 'standardizing', 'standardized',
-    'upgrade', 'upgrading', 'upgraded',
-    'framework', 'library', 'dependency',
-    'api design', 'schema', 'database',
-    'authentication', 'authorization', 'security',
-    'performance', 'optimization', 'caching',
-    'configuration', 'infrastructure', 'deployment',
-];
+// Keywords indicating architectural significance
+const ARCHITECTURAL_KEYWORDS = [
+  'architecture',
+  'design',
+  'refactor',
+  'migrate',
+  'upgrade',
+  'breaking change',
+  'api change',
+  'database',
+  'schema',
+  'performance',
+  'security',
+  'authentication',
+  'authorization',
+  'infrastructure',
+  'deployment',
+  'scaling',
+  'optimization',
+  'framework',
+  'library',
+  'dependency',
+  'api',
+  'endpoint',
+  'service',
+  'component',
+  'module',
+  'system',
+]
 
-// File patterns that indicate significant changes
-const SIGNIFICANT_FILE_PATTERNS = [
-    /package\.json$/,
-    /requirements\.txt$/,
-    /go\.mod$/,
-    /Gemfile$/,
-    /pom\.xml$/,
-    /build\.gradle$/,
-    /\.config\.(ts|js|json)$/,
-    /docker-compose/i,
-    /Dockerfile/i,
-    /\.github\/workflows/,
-    /\.circleci/,
-    /schema\.(prisma|graphql|sql)$/,
-    /migrations?\//,
-];
+// Noise patterns to filter out
+const NOISE_PATTERNS = [
+  /^bump /i,
+  /^update.*dependencies/i,
+  /^chore:/i,
+  /^docs?:/i,
+  /^fix typo/i,
+  /^format/i,
+  /^lint/i,
+  /^ci:/i,
+  /^\[automated\]/i,
+  /dependabot/i,
+  /renovate/i,
+  /^merge /i,
+  /^revert /i,
+  /^wip/i,
+  /^test:/i,
+]
 
-// Labels that indicate architectural decisions
-const DECISION_LABELS = [
-    'architecture',
-    'breaking-change',
-    'breaking',
-    'rfc',
-    'adr',
-    'design',
-    'infrastructure',
-    'security',
-    'performance',
-    'migration',
-    'deprecation',
-];
+/**
+ * Score an artifact for architectural significance
+ */
+export function scoreArtifact(artifact: Artifact): SieveScore {
+  const signals: string[] = []
+  const penalties: string[] = []
 
-const SIEVE_RULES: SieveRule[] = [
-    // Title contains decision keywords
-    {
-        name: 'title_has_decision_keyword',
-        score: 25,
-        match: (artifact) => {
-            const title = artifact.title.toLowerCase();
-            return DECISION_KEYWORDS.some(kw => title.includes(kw));
-        },
-    },
-    // Body contains decision keywords
-    {
-        name: 'body_has_decision_keyword',
-        score: 15,
-        match: (artifact) => {
-            if (!artifact.body) return false;
-            const body = artifact.body.toLowerCase();
-            return DECISION_KEYWORDS.some(kw => body.includes(kw));
-        },
-    },
-    // Has decision-related labels
-    {
-        name: 'has_decision_label',
-        score: 30,
-        match: (artifact) => {
-            return artifact.labels.some(label =>
-                DECISION_LABELS.some(dl => label.toLowerCase().includes(dl))
-            );
-        },
-    },
-    // Modifies significant files
-    {
-        name: 'modifies_significant_files',
-        score: 20,
-        match: (artifact) => {
-            return artifact.filePaths.some(path =>
-                SIGNIFICANT_FILE_PATTERNS.some(pattern => pattern.test(path))
-            );
-        },
-    },
-    // Large number of file changes (>10 files)
-    {
-        name: 'large_file_change_count',
-        score: 10,
-        match: (artifact) => {
-            return (artifact.changedFiles ?? 0) > 10;
-        },
-    },
-    // Significant code changes (>500 lines)
-    {
-        name: 'significant_code_changes',
-        score: 15,
-        match: (artifact) => {
-            const total = (artifact.additions ?? 0) + (artifact.deletions ?? 0);
-            return total > 500;
-        },
-    },
-    // Title suggests migration or upgrade
-    {
-        name: 'title_suggests_migration',
-        score: 20,
-        match: (artifact) => {
-            const title = artifact.title.toLowerCase();
-            return /migrat|upgrad|deprecat|replac|switch|refactor/i.test(title);
-        },
-    },
-    // Body has "why" explanation
-    {
-        name: 'body_has_why',
-        score: 10,
-        match: (artifact) => {
-            if (!artifact.body) return false;
-            return /\b(why|reason|because|rationale|decision|chose|decided)\b/i.test(artifact.body);
-        },
-    },
-];
+  // 1. COMMIT/PR MESSAGE SCORE (0-0.4)
+  const commitScore = scoreMessage(artifact, signals, penalties)
 
-interface SieveResult {
-    score: number;
-    passed: boolean;
-    matchedRules: string[];
+  // 2. PR METADATA SCORE (0-0.3)
+  const prScore = scorePRMetadata(artifact, signals, penalties)
+
+  // 3. DIFF ANALYSIS SCORE (0-0.3)
+  const diffScore = scoreDiff(artifact, signals, penalties)
+
+  // Calculate total (capped at 1.0)
+  const total = Math.min(commitScore + prScore + diffScore, 1.0)
+
+  // Generate reasoning
+  const reasoning = generateReasoning(total, signals, penalties)
+
+  return {
+    total,
+    breakdown: {
+      commitScore,
+      prScore,
+      diffScore,
+    },
+    details: {
+      signals,
+      penalties,
+      reasoning,
+    },
+  }
 }
 
 /**
- * Score a single artifact
+ * Score commit/PR message
  */
-export function scoreArtifact(artifact: Artifact): SieveResult {
-    const matchedRules: string[] = [];
-    let score = 0;
+function scoreMessage(
+  artifact: Artifact,
+  signals: string[],
+  penalties: string[]
+): number {
+  const title = artifact.title.toLowerCase()
+  const body = (artifact.body ?? '').toLowerCase()
+  const combined = `${title} ${body}`
 
-    for (const rule of SIEVE_RULES) {
-        if (rule.match(artifact)) {
-            score += rule.score;
-            matchedRules.push(rule.name);
-        }
+  let score = 0
+
+  // Check for noise patterns (auto-reject)
+  for (const pattern of NOISE_PATTERNS) {
+    if (pattern.test(artifact.title)) {
+      penalties.push(`Noise pattern matched: ${pattern}`)
+      return 0 // Auto-reject noise
     }
+  }
 
-    // Cap at 100
-    score = Math.min(score, 100);
+  // Check for architectural keywords
+  let keywordMatches = 0
+  for (const keyword of ARCHITECTURAL_KEYWORDS) {
+    if (combined.includes(keyword)) {
+      keywordMatches++
+      if (keywordMatches <= 3) {
+        // Only log first 3
+        signals.push(`Architectural keyword: ${keyword}`)
+      }
+    }
+  }
 
-    return {
-        score,
-        passed: score >= SIEVE_THRESHOLD,
-        matchedRules,
-    };
+  // Score based on keyword matches
+  if (keywordMatches >= 3) {
+    score += 0.4
+    signals.push(`High keyword density (${keywordMatches} matches)`)
+  } else if (keywordMatches >= 2) {
+    score += 0.3
+  } else if (keywordMatches >= 1) {
+    score += 0.2
+  }
+
+  // Bonus for long, detailed descriptions
+  if (body.length > 500) {
+    score += 0.05
+    signals.push('Detailed description')
+  }
+
+  // Check for "why" reasoning (strong signal)
+  if (
+    combined.includes('because') ||
+    combined.includes('rationale') ||
+    combined.includes('reason')
+  ) {
+    score += 0.1
+    signals.push('Contains reasoning/rationale')
+  }
+
+  return Math.min(score, 0.4)
 }
 
 /**
- * Score and update artifacts for a repo
+ * Score PR-specific metadata
  */
-export async function sieveArtifacts(repoId: string): Promise<{
-    sievedIn: number;
-    sievedOut: number;
+function scorePRMetadata(
+  artifact: Artifact,
+  signals: string[],
+  penalties: string[]
+): number {
+  if (artifact.type !== 'pr') return 0
+
+  let score = 0
+
+  // Large PRs tend to be more significant
+  if (artifact.filesChanged > 20) {
+    score += 0.15
+    signals.push(`Large PR (${artifact.filesChanged} files changed)`)
+  } else if (artifact.filesChanged > 10) {
+    score += 0.1
+    signals.push(`Medium PR (${artifact.filesChanged} files changed)`)
+  }
+
+  // Very large PRs might be mass updates (penalty)
+  if (artifact.filesChanged > 100) {
+    score -= 0.1
+    penalties.push(`Potentially noisy PR (${artifact.filesChanged} files)`)
+  }
+
+  // Significant code changes
+  const totalChanges = artifact.additions + artifact.deletions
+
+  if (totalChanges > 1000) {
+    score += 0.1
+    signals.push(`Large code change (${totalChanges} lines)`)
+  }
+
+  // Very small PRs are less likely to be architectural
+  if (totalChanges < 10 && artifact.filesChanged < 3) {
+    score -= 0.05
+    penalties.push('Very small change')
+  }
+
+  return Math.max(score, 0)
+}
+
+/**
+ * Score diff content
+ */
+function scoreDiff(
+  artifact: Artifact,
+  signals: string[],
+  penalties: string[]
+): number {
+  if (!artifact.diff) return 0
+
+  const diff = artifact.diff.toLowerCase()
+  let score = 0
+
+  // Check for config file changes
+  if (
+    diff.includes('config') ||
+    diff.includes('.yml') ||
+    diff.includes('.yaml') ||
+    diff.includes('.json')
+  ) {
+    score += 0.05
+    signals.push('Config file changes')
+  }
+
+  // Check for database migrations
+  if (
+    diff.includes('migration') ||
+    diff.includes('schema') ||
+    diff.includes('alter table') ||
+    diff.includes('create table')
+  ) {
+    score += 0.2
+    signals.push('Database schema changes')
+  }
+
+  // Check for API changes
+  if (
+    diff.includes('api') ||
+    diff.includes('endpoint') ||
+    diff.includes('route')
+  ) {
+    score += 0.1
+    signals.push('API changes')
+  }
+
+  // Check for test file changes (less significant)
+  const testFileRatio =
+    (diff.match(/test|spec/g) || []).length / (diff.length / 1000)
+
+  if (testFileRatio > 5) {
+    score -= 0.05
+    penalties.push('Primarily test file changes')
+  }
+
+  // Check for lock file changes (noise)
+  if (
+    diff.includes('package-lock') ||
+    diff.includes('yarn.lock') ||
+    diff.includes('pnpm-lock')
+  ) {
+    score -= 0.1
+    penalties.push('Lock file changes detected')
+  }
+
+  return Math.max(score, 0)
+}
+
+/**
+ * Generate human-readable reasoning
+ */
+function generateReasoning(
+  score: number,
+  signals: string[],
+  penalties: string[]
+): string {
+  if (score >= 0.7) {
+    return `High significance (${score.toFixed(2)}): Strong architectural signals detected. ${signals.join(', ')}.`
+  }
+
+  if (score >= 0.4) {
+    return `Moderate significance (${score.toFixed(2)}): Some architectural signals. ${signals.join(', ')}.`
+  }
+
+  if (score >= 0.2) {
+    return `Low significance (${score.toFixed(2)}): Few architectural signals. ${penalties.length > 0 ? 'Penalties: ' + penalties.join(', ') : ''}`
+  }
+
+  return `Noise (${score.toFixed(2)}): Likely not an architectural decision. ${penalties.join(', ')}.`
+}
+
+/**
+ * Filter artifacts through sieve and create candidates
+ */
+export async function sieveArtifacts(
+  repoId: string,
+  userId: string,
+  threshold: number = 0.4
+): Promise<{
+  processedCount: number
+  candidatesCreated: number
+  avgScore: number
 }> {
-    const pendingArtifacts = await prisma.artifact.findMany({
-        where: {
-            repoId,
-            processingStatus: 'pending',
-        },
-    });
-
-    let sievedIn = 0;
-    let sievedOut = 0;
-
-    for (const artifact of pendingArtifacts) {
-        const result = scoreArtifact(artifact);
-
-        await prisma.artifact.update({
-            where: { id: artifact.id },
-            data: {
-                sieveScore: result.score,
-                sieveRules: { matchedRules: result.matchedRules },
-                sievedAt: new Date(),
-                processingStatus: result.passed ? 'sieved_in' : 'sieved_out',
-            },
-        });
-
-        if (result.passed) {
-            sievedIn++;
-        } else {
-            sievedOut++;
-        }
-    }
-
-    return { sievedIn, sievedOut };
+  // This will be implemented when we integrate with the database
+  // For now, just return a stub
+  return {
+    processedCount: 0,
+    candidatesCreated: 0,
+    avgScore: 0,
+  }
 }
-
-export { SIEVE_THRESHOLD, SIEVE_RULES };

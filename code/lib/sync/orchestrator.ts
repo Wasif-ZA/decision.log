@@ -1,279 +1,181 @@
-// ===========================================
-// Sync Orchestrator
-// ===========================================
-// Coordinates the sync pipeline: fetch → sieve → extract
+/**
+ * Sync Orchestrator
+ *
+ * Orchestrates the full sync pipeline: Fetch → Sieve → Extract
+ */
 
-import { prisma } from '@/lib/db';
-import { GitHubClient } from '@/lib/github/client';
-import { fetchPullRequests, logSyncProgress } from './fetch';
-import { parseCursor, getNextCursor } from './cursor';
-import { Prisma, type Repo, type SyncRun, type SyncRunLog } from '@prisma/client';
+import { db } from '@/lib/db'
+import { decrypt } from '@/lib/crypto'
+import { fetchPullRequests } from './fetch'
+import { scoreArtifact } from '@/lib/sieve/scorer'
+import { logError, DatabaseError } from '@/lib/errors'
 
-export type SyncStatus = 'pending' | 'fetching' | 'sieving' | 'extracting' | 'complete' | 'failed';
+const SIEVE_THRESHOLD = 0.4 // Minimum score to create candidate
 
-interface SyncResult {
-    status: SyncStatus;
-    syncRunId: string;
-    prsFetched: number;
-    artifactsCreated: number;
-    artifactsUpdated: number;
-    artifactsSievedIn: number;
-    artifactsSievedOut: number;
-    candidatesCreated: number;
-    error?: string;
+export interface SyncResult {
+  success: boolean
+  fetchedCount: number
+  sievedCount: number
+  candidatesCreated: number
+  errors: string[]
+  newCursor: string | null
 }
 
 /**
- * Start or continue a sync for a repo
+ * Sync a repository (Fetch + Sieve)
+ *
+ * Note: Extraction is triggered separately by user via /extract endpoint
  */
-export async function startSync(
-    userId: string,
-    repoId: string
-): Promise<SyncRun> {
-    // Check for in-progress sync
-    const existingSync = await prisma.syncRun.findFirst({
-        where: {
-            repoId,
-            status: { in: ['pending', 'fetching', 'sieving', 'extracting'] },
-        },
-    });
+export async function syncRepository(
+  repoId: string,
+  userId: string
+): Promise<SyncResult> {
+  const errors: string[] = []
+  let fetchedCount = 0
+  let sievedCount = 0
+  let candidatesCreated = 0
+  let newCursor: string | null = null
 
-    if (existingSync) {
-        return existingSync;
+  // Start sync operation
+  const syncOp = await db.syncOperation.create({
+    data: {
+      repoId,
+      userId,
+      status: 'syncing',
+    },
+  })
+
+  try {
+    // 1. Get repo and user
+    const repo = await db.repo.findUnique({
+      where: { id: repoId },
+      include: { user: true },
+    })
+
+    if (!repo) {
+      throw new DatabaseError('Repository not found')
     }
 
-    // Get repo
-    const repo = await prisma.repo.findUnique({
+    if (repo.userId !== userId) {
+      throw new DatabaseError('Unauthorized access to repository')
+    }
+
+    // 2. Decrypt GitHub token
+    if (!repo.user.githubTokenEncrypted || !repo.user.githubTokenIv) {
+      throw new DatabaseError('GitHub token not found')
+    }
+
+    const githubToken = await decrypt(
+      repo.user.githubTokenEncrypted,
+      repo.user.githubTokenIv
+    )
+
+    // 3. Fetch PRs from GitHub
+    const [owner, repoName] = repo.fullName.split('/')
+
+    const fetchResult = await fetchPullRequests(repoId, githubToken, {
+      owner,
+      repo: repoName,
+      cursor: repo.cursor,
+      limit: 50,
+    })
+
+    fetchedCount = fetchResult.fetchedCount
+    newCursor = fetchResult.newCursor
+    errors.push(...fetchResult.errors)
+
+    // 4. Run sieve on new artifacts
+    const artifacts = await db.artifact.findMany({
+      where: {
+        repoId,
+        candidate: null, // Not yet sieved
+      },
+      orderBy: { authoredAt: 'desc' },
+      take: 100,
+    })
+
+    for (const artifact of artifacts) {
+      try {
+        // Score artifact
+        const score = scoreArtifact(artifact)
+        sievedCount++
+
+        // Create candidate if above threshold
+        if (score.total >= SIEVE_THRESHOLD) {
+          await db.candidate.create({
+            data: {
+              repoId,
+              artifactId: artifact.id,
+              userId,
+              sieveScore: score.total,
+              scoreBreakdown: score.breakdown,
+              status: 'pending',
+            },
+          })
+          candidatesCreated++
+        }
+      } catch (error) {
+        logError(error, `Failed to sieve artifact ${artifact.id}`)
+        errors.push(`Failed to sieve artifact ${artifact.id}`)
+      }
+    }
+
+    // 5. Update repo cursor
+    if (newCursor) {
+      await db.repo.update({
         where: { id: repoId },
-    });
-
-    if (!repo || repo.userId !== userId) {
-        throw new Error('Repo not found or access denied');
-    }
-
-    // Create new sync run
-    const syncRun = await prisma.syncRun.create({
         data: {
-            repoId,
-            status: 'pending',
-            cursorBefore: repo.syncCursor as Prisma.InputJsonValue,
+          cursor: newCursor,
+          lastSyncAt: new Date(),
+          syncStatus: 'idle',
         },
-    });
-
-    // Start the sync in the background (non-blocking)
-    runSync(repo, syncRun).catch(error => {
-        console.error('Sync error:', error);
-    });
-
-    return syncRun;
-}
-
-/**
- * Run the full sync pipeline
- */
-async function runSync(repo: Repo, syncRun: SyncRun): Promise<void> {
-    try {
-        // Update status to fetching
-        await prisma.syncRun.update({
-            where: { id: syncRun.id },
-            data: { status: 'fetching' },
-        });
-
-        // Create GitHub client
-        const client = await GitHubClient.forUser(repo.userId);
-
-        // Phase 1: Fetch PRs
-        await logSyncProgress(syncRun.id, 'info', 'Starting fetch phase');
-        const fetchResult = await fetchPullRequests(client, repo, syncRun);
-
-        await prisma.syncRun.update({
-            where: { id: syncRun.id },
-            data: {
-                fetchDoneAt: new Date(),
-                status: 'sieving',
-            },
-        });
-
-        // Phase 2: Sieve (score and filter artifacts)
-        await logSyncProgress(syncRun.id, 'info', 'Starting sieve phase');
-        const sieveResult = await runSievePhase(repo.id, syncRun.id);
-
-        await prisma.syncRun.update({
-            where: { id: syncRun.id },
-            data: {
-                sieveDoneAt: new Date(),
-                artifactsSievedIn: sieveResult.sievedIn,
-                artifactsSievedOut: sieveResult.sievedOut,
-                status: 'extracting',
-            },
-        });
-
-        // Phase 3: Extract (LLM extraction)
-        await logSyncProgress(syncRun.id, 'info', 'Starting extraction phase');
-        const extractResult = await runExtractPhase(repo.id, syncRun.id);
-
-        // Update cursor
-        const newCursor = fetchResult.latestPrUpdate
-            ? {
-                ...parseCursor(repo.syncCursor),
-                prUpdatedAfter: getNextCursor(fetchResult.latestPrUpdate),
-            }
-            : repo.syncCursor;
-
-        // Mark complete
-        await prisma.$transaction([
-            prisma.syncRun.update({
-                where: { id: syncRun.id },
-                data: {
-                    status: 'complete',
-                    extractDoneAt: new Date(),
-                    completedAt: new Date(),
-                    candidatesCreated: extractResult.candidatesCreated,
-                    candidatesSkipped: extractResult.candidatesSkipped,
-                    tokensInput: extractResult.tokensInput,
-                    tokensOutput: extractResult.tokensOutput,
-                    cursorAfter: newCursor as Prisma.InputJsonValue,
-                },
-            }),
-            prisma.repo.update({
-                where: { id: repo.id },
-                data: {
-                    lastSyncAt: new Date(),
-                    lastSyncStatus: 'complete',
-                    syncCursor: newCursor as Prisma.InputJsonValue,
-                    hasCompletedFirstSync: true,
-                },
-            }),
-        ]);
-
-        await logSyncProgress(syncRun.id, 'info', 'Sync completed successfully');
-
-    } catch (error) {
-        console.error('Sync failed:', error);
-
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-
-        await prisma.syncRun.update({
-            where: { id: syncRun.id },
-            data: {
-                status: 'failed',
-                errorMessage,
-                completedAt: new Date(),
-            },
-        });
-
-        await prisma.repo.update({
-            where: { id: repo.id },
-            data: {
-                lastSyncAt: new Date(),
-                lastSyncStatus: 'failed',
-            },
-        });
-
-        await logSyncProgress(syncRun.id, 'error', `Sync failed: ${errorMessage}`);
-    }
-}
-
-/**
- * Run the sieve phase - scores artifacts and filters
- */
-async function runSievePhase(
-    repoId: string,
-    syncRunId: string
-): Promise<{ sievedIn: number; sievedOut: number }> {
-    // Import the real sieve scorer
-    const { sieveArtifacts } = await import('@/lib/sieve/scorer');
-
-    const result = await sieveArtifacts(repoId);
-
-    await logSyncProgress(
-        syncRunId,
-        'info',
-        `Sieved ${result.sievedIn + result.sievedOut} artifacts: ${result.sievedIn} passed, ${result.sievedOut} filtered`
-    );
-
-    return result;
-}
-
-/**
- * Run the extract phase - LLM extraction
- */
-async function runExtractPhase(
-    repoId: string,
-    syncRunId: string
-): Promise<{
-    candidatesCreated: number;
-    candidatesSkipped: number;
-    tokensInput: number;
-    tokensOutput: number;
-}> {
-    // Check if LLM is configured
-    if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENAI_API_KEY) {
-        await logSyncProgress(
-            syncRunId,
-            'warn',
-            'No LLM API key configured, skipping extraction'
-        );
-
-        // Mark sieved artifacts as skipped
-        await prisma.artifact.updateMany({
-            where: {
-                repoId,
-                processingStatus: 'sieved_in',
-            },
-            data: {
-                processingStatus: 'skipped',
-            },
-        });
-
-        return {
-            candidatesCreated: 0,
-            candidatesSkipped: 0,
-            tokensInput: 0,
-            tokensOutput: 0,
-        };
+      })
     }
 
-    // Import and run real extraction
-    const { extractDecisions } = await import('@/lib/extract/client');
-
-    const result = await extractDecisions(repoId, syncRunId);
-
-    if (result.errors.length > 0) {
-        await logSyncProgress(
-            syncRunId,
-            'warn',
-            `Extraction completed with ${result.errors.length} errors`,
-            { errors: result.errors }
-        );
-    } else {
-        await logSyncProgress(
-            syncRunId,
-            'info',
-            `Extraction complete: ${result.candidatesCreated} candidates created, ${result.candidatesSkipped} skipped`
-        );
-    }
+    // 6. Complete sync operation
+    await db.syncOperation.update({
+      where: { id: syncOp.id },
+      data: {
+        status: errors.length > 0 ? 'partial' : 'success',
+        completedAt: new Date(),
+        fetchedCount,
+        sievedCount,
+        extractedCount: 0, // Extraction happens separately
+        errorCount: errors.length,
+        errorMessage: errors.length > 0 ? errors.join('; ') : null,
+        endCursor: newCursor,
+      },
+    })
 
     return {
-        candidatesCreated: result.candidatesCreated,
-        candidatesSkipped: result.candidatesSkipped,
-        tokensInput: result.tokensInput,
-        tokensOutput: result.tokensOutput,
-    };
-}
+      success: true,
+      fetchedCount,
+      sievedCount,
+      candidatesCreated,
+      errors,
+      newCursor,
+    }
+  } catch (error) {
+    logError(error, 'Sync failed')
 
-/**
- * Get sync status
- */
-export async function getSyncStatus(repoId: string): Promise<(SyncRun & { logs: SyncRunLog[] }) | null> {
-    return prisma.syncRun.findFirst({
-        where: { repoId },
-        orderBy: { startedAt: 'desc' },
-        include: {
-            logs: {
-                orderBy: { createdAt: 'desc' },
-                take: 10,
-            },
-        },
-    });
+    // Update sync operation with error
+    await db.syncOperation.update({
+      where: { id: syncOp.id },
+      data: {
+        status: 'error',
+        completedAt: new Date(),
+        errorCount: errors.length + 1,
+        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+      },
+    })
+
+    return {
+      success: false,
+      fetchedCount,
+      sievedCount,
+      candidatesCreated,
+      errors: [...errors, error instanceof Error ? error.message : 'Unknown error'],
+      newCursor,
+    }
+  }
 }

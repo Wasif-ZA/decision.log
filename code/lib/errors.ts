@@ -1,138 +1,203 @@
-// ===========================================
-// Error Classes for API Routes
-// ===========================================
+/**
+ * Error Classes and Handling
+ *
+ * Centralized error handling with proper status codes and error codes
+ */
 
-export type ErrorCode =
-    | 'UNAUTHORIZED'
-    | 'FORBIDDEN'
-    | 'NOT_FOUND'
-    | 'VALIDATION_ERROR'
-    | 'RATE_LIMITED'
-    | 'INTERNAL_ERROR'
-    | 'TOKEN_EXPIRED'
-    | 'TOKEN_INVALID'
-    | 'REPO_ACCESS_REVOKED'
-    | 'REPO_NOT_FOUND'
-    | 'SYNC_IN_PROGRESS'
-    | 'EXTRACTION_LIMIT_REACHED';
-
-export interface ErrorResponse {
-    error: {
-        code: ErrorCode;
-        message: string;
-        details?: unknown;
-    };
-}
+import { ERROR_CODES } from '@/types/app'
 
 /**
  * Base application error
  */
 export class AppError extends Error {
-    constructor(
-        public readonly code: ErrorCode,
-        message: string,
-        public readonly statusCode: number = 500,
-        public readonly details?: unknown
-    ) {
-        super(message);
-        this.name = 'AppError';
-    }
+  constructor(
+    message: string,
+    public code: string = ERROR_CODES.SERVER_ERROR,
+    public statusCode: number = 500,
+    public details?: unknown
+  ) {
+    super(message)
+    this.name = 'AppError'
+    Error.captureStackTrace(this, this.constructor)
+  }
 
-    toResponse(): Response {
-        const body: ErrorResponse = {
-            error: {
-                code: this.code,
-                message: this.message,
-                ...(this.details && { details: this.details }),
-            },
-        };
-
-        return new Response(JSON.stringify(body), {
-            status: this.statusCode,
-            headers: { 'Content-Type': 'application/json' },
-        });
+  toJSON() {
+    return {
+      code: this.code,
+      message: this.message,
+      details: this.details,
     }
+  }
 }
 
 /**
- * Authentication errors (401)
+ * Authentication error (401)
  */
-export class AuthError extends AppError {
-    constructor(message: string = 'Authentication required', code: ErrorCode = 'UNAUTHORIZED') {
-        super(code, message, 401);
-        this.name = 'AuthError';
-    }
+export class UnauthorizedError extends AppError {
+  constructor(message: string = 'Unauthorized', details?: unknown) {
+    super(message, ERROR_CODES.UNAUTHORIZED, 401, details)
+    this.name = 'UnauthorizedError'
+  }
 }
 
 /**
- * Authorization errors (403)
+ * Permission error (403)
  */
 export class ForbiddenError extends AppError {
-    constructor(message: string = 'Access denied') {
-        super('FORBIDDEN', message, 403);
-        this.name = 'ForbiddenError';
-    }
+  constructor(message: string = 'Forbidden', details?: unknown) {
+    super(message, ERROR_CODES.FORBIDDEN, 403, details)
+    this.name = 'ForbiddenError'
+  }
 }
 
 /**
- * Not found errors (404)
+ * Not found error (404)
  */
 export class NotFoundError extends AppError {
-    constructor(resource: string = 'Resource') {
-        super('NOT_FOUND', `${resource} not found`, 404);
-        this.name = 'NotFoundError';
-    }
+  constructor(
+    message: string = 'Resource not found',
+    details?: unknown
+  ) {
+    super(message, 'NOT_FOUND', 404, details)
+    this.name = 'NotFoundError'
+  }
 }
 
 /**
- * Validation errors (400)
+ * Validation error (400)
  */
 export class ValidationError extends AppError {
-    constructor(message: string, details?: unknown) {
-        super('VALIDATION_ERROR', message, 400, details);
-        this.name = 'ValidationError';
-    }
+  constructor(message: string, details?: unknown) {
+    super(message, 'VALIDATION_ERROR', 400, details)
+    this.name = 'ValidationError'
+  }
 }
 
 /**
- * Rate limit errors (429)
+ * Rate limit error (429)
  */
 export class RateLimitError extends AppError {
-    constructor(message: string = 'Rate limit exceeded', retryAfter?: number) {
-        super('RATE_LIMITED', message, 429, retryAfter ? { retryAfter } : undefined);
-        this.name = 'RateLimitError';
-    }
+  constructor(message: string, public retryAfter?: number) {
+    super(message, ERROR_CODES.RATE_LIMITED, 429, { retryAfter })
+    this.name = 'RateLimitError'
+  }
 }
 
 /**
- * Repo access errors
+ * GitHub API error
  */
-export class RepoAccessError extends AppError {
-    constructor(status: 'revoked' | 'not_found') {
-        const code: ErrorCode = status === 'revoked' ? 'REPO_ACCESS_REVOKED' : 'REPO_NOT_FOUND';
-        const message = status === 'revoked'
-            ? 'Access to this repo has been revoked'
-            : 'This repo no longer exists or is inaccessible';
-        super(code, message, 403);
-        this.name = 'RepoAccessError';
-    }
+export class GitHubError extends AppError {
+  constructor(
+    message: string,
+    public statusCode: number = 500,
+    details?: unknown
+  ) {
+    super(
+      message,
+      statusCode === 403
+        ? ERROR_CODES.REPO_ACCESS_REVOKED
+        : ERROR_CODES.SERVER_ERROR,
+      statusCode,
+      details
+    )
+    this.name = 'GitHubError'
+  }
 }
 
 /**
- * Handle errors in API routes
+ * LLM extraction error
  */
-export function handleError(error: unknown): Response {
-    console.error('API Error:', error);
+export class ExtractionError extends AppError {
+  constructor(message: string, details?: unknown) {
+    super(message, 'EXTRACTION_ERROR', 500, details)
+    this.name = 'ExtractionError'
+  }
+}
 
-    if (error instanceof AppError) {
-        return error.toResponse();
+/**
+ * Database error
+ */
+export class DatabaseError extends AppError {
+  constructor(message: string, details?: unknown) {
+    super(message, 'DATABASE_ERROR', 500, details)
+    this.name = 'DatabaseError'
+  }
+}
+
+/**
+ * Handle and format errors for API responses
+ */
+export function handleError(error: unknown): {
+  code: string
+  message: string
+  details?: unknown
+  statusCode: number
+} {
+  // AppError instances
+  if (error instanceof AppError) {
+    return {
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      statusCode: error.statusCode,
+    }
+  }
+
+  // Prisma errors
+  if (error && typeof error === 'object' && 'code' in error) {
+    const prismaError = error as { code: string; meta?: unknown }
+
+    if (prismaError.code === 'P2002') {
+      return {
+        code: 'UNIQUE_CONSTRAINT_VIOLATION',
+        message: 'A record with this value already exists',
+        details: prismaError.meta,
+        statusCode: 409,
+      }
     }
 
-    // Unknown error
-    const appError = new AppError(
-        'INTERNAL_ERROR',
-        'An unexpected error occurred',
-        500
-    );
-    return appError.toResponse();
+    if (prismaError.code === 'P2025') {
+      return {
+        code: 'NOT_FOUND',
+        message: 'Record not found',
+        details: prismaError.meta,
+        statusCode: 404,
+      }
+    }
+
+    return {
+      code: 'DATABASE_ERROR',
+      message: 'Database operation failed',
+      details: prismaError,
+      statusCode: 500,
+    }
+  }
+
+  // Standard Error
+  if (error instanceof Error) {
+    return {
+      code: ERROR_CODES.SERVER_ERROR,
+      message: error.message,
+      statusCode: 500,
+    }
+  }
+
+  // Unknown error
+  return {
+    code: ERROR_CODES.SERVER_ERROR,
+    message: 'An unexpected error occurred',
+    statusCode: 500,
+  }
+}
+
+/**
+ * Log error with context
+ */
+export function logError(error: unknown, context?: string) {
+  const formatted = handleError(error)
+  console.error(
+    `[ERROR]${context ? ` ${context}:` : ''}`,
+    formatted.message,
+    formatted.details ? JSON.stringify(formatted.details) : ''
+  )
 }

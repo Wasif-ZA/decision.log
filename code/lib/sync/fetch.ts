@@ -1,187 +1,260 @@
-// ===========================================
-// Fetch PRs and Commits from GitHub
-// ===========================================
+/**
+ * Fetch Artifacts from GitHub
+ *
+ * Fetches PRs and commits from GitHub and stores as artifacts
+ */
 
-import { prisma } from '@/lib/db';
-import { GitHubClient, type GitHubPullRequest } from '@/lib/github/client';
-import { parseCursor, isAfterCursor, getInitialCursor } from './cursor';
-import type { Repo, SyncRun, Artifact } from '@prisma/client';
+import { GitHubClient, type GitHubPullRequest } from '@/lib/github/client'
+import { db } from '@/lib/db'
+import { parseCursor, createPRCursor, createTimestampCursor } from './cursor'
+import { logError } from '@/lib/errors'
 
-const FIRST_SYNC_PR_CAP = 100;
-const FIRST_SYNC_DAYS = 90;
-
-interface FetchResult {
-    prsFetched: number;
-    commitsFetched: number;
-    artifactsCreated: number;
-    artifactsUpdated: number;
-    latestPrUpdate: Date | null;
-}
+const MAX_DIFF_SIZE = 100 * 1024 // 100KB max per diff
 
 /**
- * Fetch PRs from GitHub and upsert to Artifacts
+ * Fetch and store pull requests for a repository
  */
 export async function fetchPullRequests(
-    client: GitHubClient,
-    repo: Repo,
-    syncRun: SyncRun
-): Promise<FetchResult> {
-    const result: FetchResult = {
-        prsFetched: 0,
-        commitsFetched: 0,
-        artifactsCreated: 0,
-        artifactsUpdated: 0,
-        latestPrUpdate: null,
-    };
+  repoId: string,
+  githubToken: string,
+  options: {
+    owner: string
+    repo: string
+    cursor?: string | null
+    limit?: number
+  }
+): Promise<{
+  fetchedCount: number
+  newCursor: string | null
+  errors: string[]
+}> {
+  const client = new GitHubClient(githubToken)
+  const errors: string[] = []
+  let fetchedCount = 0
 
-    // Get cursor
-    const cursor = repo.hasCompletedFirstSync
-        ? parseCursor(repo.syncCursor)
-        : getInitialCursor(FIRST_SYNC_DAYS);
+  try {
+    // Parse cursor to determine where to start
+    const parsed = parseCursor(options.cursor)
+    let sinceDate: string | undefined
 
-    let page = 1;
-    let hasMore = true;
-    const processedPrs: GitHubPullRequest[] = [];
-
-    while (hasMore) {
-        const prs = await client.listPullRequests(repo.owner, repo.name, {
-            state: 'all',
-            sort: 'updated',
-            direction: 'desc',
-            perPage: 100,
-            page,
-        });
-
-        if (prs.length === 0) break;
-
-        for (const pr of prs) {
-            // Filter: only merged PRs for MVP
-            if (!pr.merged) continue;
-
-            // Check cursor - stop if we've seen this before
-            if (!isAfterCursor(pr.updated_at, cursor.prUpdatedAfter)) {
-                hasMore = false;
-                break;
-            }
-
-            processedPrs.push(pr);
-
-            // Track latest update
-            const prUpdatedAt = new Date(pr.updated_at);
-            if (!result.latestPrUpdate || prUpdatedAt > result.latestPrUpdate) {
-                result.latestPrUpdate = prUpdatedAt;
-            }
-
-            // First sync cap
-            if (!repo.hasCompletedFirstSync && processedPrs.length >= FIRST_SYNC_PR_CAP) {
-                hasMore = false;
-                break;
-            }
-        }
-
-        page++;
-
-        // Safety: max 10 pages
-        if (page > 10) break;
+    if (parsed?.type === 'timestamp') {
+      sinceDate = parsed.value
+    } else if (parsed?.type === 'pr') {
+      // For PR cursors, we'll fetch all and filter
+      // This is simpler than trying to paginate from a specific PR
     }
 
-    result.prsFetched = processedPrs.length;
+    // Fetch PRs from GitHub
+    const prs = await client.fetchPullRequests(options.owner, options.repo, {
+      state: 'closed', // Only closed/merged PRs
+      sort: 'updated',
+      direction: 'desc',
+      per_page: Math.min(options.limit ?? 50, 100),
+      since: sinceDate,
+    })
 
-    // Log progress
-    await logSyncProgress(syncRun.id, 'info', `Fetched ${processedPrs.length} merged PRs`);
+    // Filter merged PRs only
+    const mergedPRs = prs.filter((pr) => pr.merged_at !== null)
 
-    // Upsert PRs as Artifacts
-    for (const pr of processedPrs) {
-        // Get file paths for the PR
-        let filePaths: string[] = [];
+    // Store each PR as an artifact
+    for (const pr of mergedPRs) {
+      try {
+        // Fetch full diff (truncated to MAX_DIFF_SIZE)
+        let diff: string | null = null
         try {
-            const files = await client.getPullRequestFiles(repo.owner, repo.name, pr.number);
-            filePaths = files.slice(0, 100).map(f => f.filename);
+          const fullDiff = await client.fetchPullRequestDiff(
+            options.owner,
+            options.repo,
+            pr.number
+          )
+          diff = fullDiff.slice(0, MAX_DIFF_SIZE)
         } catch (error) {
-            console.warn(`Failed to fetch files for PR #${pr.number}:`, error);
+          logError(error, `Failed to fetch diff for PR #${pr.number}`)
+          errors.push(`Failed to fetch diff for PR #${pr.number}`)
         }
 
-        const artifactData = {
-            repoId: repo.id,
-            type: 'pr' as const,
-            externalId: String(pr.number),
+        // Upsert artifact
+        await db.artifact.upsert({
+          where: {
+            repoId_githubId_type: {
+              repoId,
+              githubId: pr.number,
+              type: 'pr',
+            },
+          },
+          create: {
+            repoId,
+            githubId: pr.number,
+            type: 'pr',
+            url: pr.html_url,
+            branch: pr.head.ref,
+            title: pr.title,
+            author: pr.user.login,
+            authoredAt: new Date(pr.created_at),
+            mergedAt: pr.merged_at ? new Date(pr.merged_at) : null,
+            body: pr.body,
+            diff,
+            filesChanged: pr.changed_files,
+            additions: pr.additions,
+            deletions: pr.deletions,
+          },
+          update: {
             title: pr.title,
             body: pr.body,
-            url: pr.html_url,
-            authorLogin: pr.user?.login ?? null,
-            prNumber: pr.number,
-            prState: pr.state,
-            isMerged: pr.merged,
+            diff,
+            filesChanged: pr.changed_files,
+            additions: pr.additions,
+            deletions: pr.deletions,
             mergedAt: pr.merged_at ? new Date(pr.merged_at) : null,
-            labels: pr.labels.map(l => l.name),
-            additions: pr.additions ?? null,
-            deletions: pr.deletions ?? null,
-            changedFiles: pr.changed_files ?? null,
-            filePaths,
-            createdAtSource: new Date(pr.created_at),
-            updatedAtSource: new Date(pr.updated_at),
-        };
+          },
+        })
 
-        const existing = await prisma.artifact.findUnique({
-            where: {
-                repoId_type_externalId: {
-                    repoId: repo.id,
-                    type: 'pr',
-                    externalId: String(pr.number),
-                },
-            },
-        });
-
-        if (existing) {
-            await prisma.artifact.update({
-                where: { id: existing.id },
-                data: {
-                    ...artifactData,
-                    // Preserve processing status if already processed
-                    processingStatus: existing.processingStatus === 'pending'
-                        ? 'pending'
-                        : existing.processingStatus,
-                },
-            });
-            result.artifactsUpdated++;
-        } else {
-            await prisma.artifact.create({
-                data: artifactData,
-            });
-            result.artifactsCreated++;
-        }
+        fetchedCount++
+      } catch (error) {
+        logError(error, `Failed to store PR #${pr.number}`)
+        errors.push(`Failed to store PR #${pr.number}`)
+      }
     }
 
-    // Update sync run metrics
-    await prisma.syncRun.update({
-        where: { id: syncRun.id },
-        data: {
-            prsFetched: result.prsFetched,
-            artifactsCreated: result.artifactsCreated,
-            artifactsUpdated: result.artifactsUpdated,
-        },
-    });
+    // Create new cursor
+    let newCursor: string | null = null
 
-    return result;
+    if (mergedPRs.length > 0) {
+      const latestPR = mergedPRs[0] // Already sorted by updated DESC
+      newCursor = createPRCursor(latestPR.number)
+    }
+
+    return {
+      fetchedCount,
+      newCursor,
+      errors,
+    }
+  } catch (error) {
+    logError(error, 'Failed to fetch pull requests')
+    return {
+      fetchedCount,
+      newCursor: options.cursor ?? null,
+      errors: [...errors, 'Failed to fetch pull requests from GitHub'],
+    }
+  }
 }
 
 /**
- * Log sync progress
+ * Fetch and store commits for a repository
+ * (Fallback for repos without PRs)
  */
-async function logSyncProgress(
-    syncRunId: string,
-    level: 'debug' | 'info' | 'warn' | 'error',
-    message: string,
-    data?: unknown
-): Promise<void> {
-    await prisma.syncRunLog.create({
-        data: {
-            syncRunId,
-            level,
-            message,
-            data: data ? JSON.parse(JSON.stringify(data)) : null,
-        },
-    });
-}
+export async function fetchCommits(
+  repoId: string,
+  githubToken: string,
+  options: {
+    owner: string
+    repo: string
+    branch: string
+    cursor?: string | null
+    limit?: number
+  }
+): Promise<{
+  fetchedCount: number
+  newCursor: string | null
+  errors: string[]
+}> {
+  const client = new GitHubClient(githubToken)
+  const errors: string[] = []
+  let fetchedCount = 0
 
-export { logSyncProgress };
+  try {
+    // Parse cursor
+    const parsed = parseCursor(options.cursor)
+    let since: string | undefined
+
+    if (parsed?.type === 'timestamp') {
+      since = parsed.value
+    }
+
+    // Fetch commits
+    const commits = await client.fetchCommits(options.owner, options.repo, {
+      sha: options.branch,
+      since,
+      per_page: Math.min(options.limit ?? 50, 100),
+    })
+
+    // Store each commit as an artifact
+    for (const commit of commits) {
+      try {
+        // Fetch full commit details with stats
+        const fullCommit = await client.fetchCommit(
+          options.owner,
+          options.repo,
+          commit.sha
+        )
+
+        // Build diff from patches (truncated)
+        let diff: string | null = null
+        if (fullCommit.files) {
+          diff = fullCommit.files
+            .map((file) => file.patch ?? '')
+            .join('\n')
+            .slice(0, MAX_DIFF_SIZE)
+        }
+
+        // Upsert artifact
+        await db.artifact.upsert({
+          where: {
+            repoId_githubId_type: {
+              repoId,
+              githubId: parseInt(commit.sha.slice(0, 8), 16), // Use first 8 chars as int
+              type: 'commit',
+            },
+          },
+          create: {
+            repoId,
+            githubId: parseInt(commit.sha.slice(0, 8), 16),
+            type: 'commit',
+            url: commit.html_url,
+            title: commit.commit.message.split('\n')[0], // First line
+            author: commit.author?.login ?? commit.commit.author.name,
+            authoredAt: new Date(commit.commit.author.date),
+            body: commit.commit.message,
+            diff,
+            filesChanged: fullCommit.files?.length ?? 0,
+            additions: fullCommit.stats?.additions ?? 0,
+            deletions: fullCommit.stats?.deletions ?? 0,
+          },
+          update: {
+            title: commit.commit.message.split('\n')[0],
+            body: commit.commit.message,
+            diff,
+          },
+        })
+
+        fetchedCount++
+      } catch (error) {
+        logError(error, `Failed to store commit ${commit.sha}`)
+        errors.push(`Failed to store commit ${commit.sha}`)
+      }
+    }
+
+    // Create new cursor
+    let newCursor: string | null = null
+
+    if (commits.length > 0) {
+      const latestCommit = commits[0]
+      newCursor = createTimestampCursor(
+        new Date(latestCommit.commit.author.date)
+      )
+    }
+
+    return {
+      fetchedCount,
+      newCursor,
+      errors,
+    }
+  } catch (error) {
+    logError(error, 'Failed to fetch commits')
+    return {
+      fetchedCount,
+      newCursor: options.cursor ?? null,
+      errors: [...errors, 'Failed to fetch commits from GitHub'],
+    }
+  }
+}

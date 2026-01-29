@@ -1,106 +1,74 @@
-// ===========================================
-// Zod Validation Helpers
-// ===========================================
+/**
+ * Validation Utilities
+ *
+ * Zod schemas and helpers for API validation
+ */
 
-import { z } from 'zod';
-import { ValidationError } from './errors';
+import { z } from 'zod'
+import { ValidationError } from '@/lib/errors'
 
 /**
- * Validate request body against a Zod schema
- * Throws ValidationError if validation fails
+ * Validate data against a Zod schema
  */
-export function validateBody<T>(schema: z.ZodSchema<T>, body: unknown): T {
-    const result = schema.safeParse(body);
-
-    if (!result.success) {
-        const errors = result.error.flatten();
-        throw new ValidationError('Invalid request body', errors);
-    }
-
-    return result.data;
-}
-
-/**
- * Validate query parameters against a Zod schema
- * Throws ValidationError if validation fails
- */
-export function validateQuery<T>(
-    schema: z.ZodSchema<T>,
-    params: URLSearchParams
+export function validate<T>(
+  schema: z.ZodSchema<T>,
+  data: unknown
 ): T {
-    // Convert URLSearchParams to plain object
-    const obj: Record<string, string | string[]> = {};
+  const result = schema.safeParse(data)
 
-    params.forEach((value, key) => {
-        const existing = obj[key];
-        if (existing) {
-            // Handle multiple values for same key
-            obj[key] = Array.isArray(existing)
-                ? [...existing, value]
-                : [existing, value];
-        } else {
-            obj[key] = value;
-        }
-    });
+  if (!result.success) {
+    throw new ValidationError(
+      'Validation failed',
+      result.error.flatten()
+    )
+  }
 
-    const result = schema.safeParse(obj);
-
-    if (!result.success) {
-        const errors = result.error.flatten();
-        throw new ValidationError('Invalid query parameters', errors);
-    }
-
-    return result.data;
+  return result.data
 }
 
 /**
- * Parse JSON body safely
- * Returns null if parsing fails
+ * Validate request body
  */
-export async function parseJsonBody<T = unknown>(
-    request: Request
-): Promise<T | null> {
-    try {
-        return await request.json();
-    } catch {
-        return null;
-    }
-}
-
-/**
- * Validate and parse JSON body in one step
- */
-export async function validateJsonBody<T>(
-    request: Request,
-    schema: z.ZodSchema<T>
+export async function validateBody<T>(
+  request: Request,
+  schema: z.ZodSchema<T>
 ): Promise<T> {
-    const body = await parseJsonBody(request);
-
-    if (body === null) {
-        throw new ValidationError('Invalid JSON body');
-    }
-
-    return validateBody(schema, body);
+  const body = await request.json()
+  return validate(schema, body)
 }
 
-// ===========================================
-// Common Zod Schemas
-// ===========================================
+/**
+ * Validate URL search params
+ */
+export function validateSearchParams<T>(
+  searchParams: URLSearchParams,
+  schema: z.ZodSchema<T>
+): T {
+  const params = Object.fromEntries(searchParams.entries())
+  return validate(schema, params)
+}
 
-export const IdParamSchema = z.object({
-    id: z.string().min(1, 'ID is required'),
-});
+/**
+ * Common validation schemas
+ */
+
+export const RepoIdSchema = z.object({
+  id: z.string().cuid(),
+})
+
+export const CandidateIdSchema = z.object({
+  id: z.string().cuid(),
+})
+
+export const DecisionIdSchema = z.object({
+  id: z.string().cuid(),
+})
 
 export const PaginationSchema = z.object({
-    page: z.coerce.number().int().positive().default(1),
-    limit: z.coerce.number().int().positive().max(100).default(20),
-});
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  offset: z.coerce.number().int().min(0).default(0),
+})
 
-export const StatusFilterSchema = z.object({
-    status: z.enum(['new', 'approved', 'dismissed']).optional(),
-});
-
-export const DateRangeSchema = z.object({
-    from: z.coerce.date().optional(),
-    to: z.coerce.date().optional(),
-});
+export const RepoEnableSchema = z.object({
+  fullName: z.string().regex(/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/),
+})

@@ -1,314 +1,202 @@
-// ===========================================
-// LLM Extraction Client
-// ===========================================
-// Claude primary, OpenAI fallback
+/**
+ * LLM Extraction Client
+ *
+ * Handles extraction of architectural decisions using Claude or GPT-4o
+ */
 
-import { prisma } from '@/lib/db';
+import Anthropic from '@anthropic-ai/sdk'
+import OpenAI from 'openai'
+import { ExtractionError } from '@/lib/errors'
 import {
-    ExtractionResponseSchema,
-    EXTRACTION_PROMPT,
-    formatArtifactForLLM,
-    type ExtractedDecision,
-} from './schema';
-import {
-    checkExtractionBudget,
-    incrementExtractionCount,
-    BATCH_SIZE,
-} from './governor';
-import type { Artifact } from '@prisma/client';
+  DecisionExtractionSchema,
+  EXTRACTION_SYSTEM_PROMPT,
+  createExtractionPrompt,
+  calculateCost,
+  estimateTokens,
+  type DecisionExtraction,
+} from './schema'
 
-interface ExtractionResult {
-    candidatesCreated: number;
-    candidatesSkipped: number;
-    tokensInput: number;
-    tokensOutput: number;
-    errors: string[];
+export interface ExtractionResult {
+  decisions: DecisionExtraction[]
+  model: 'claude-sonnet-4' | 'gpt-4o'
+  inputTokens: number
+  outputTokens: number
+  totalCost: number
 }
 
-type LLMProvider = 'claude' | 'openai';
+/**
+ * Extract decisions using Claude Sonnet 4 (primary)
+ */
+async function extractWithClaude(
+  artifacts: Array<{
+    number: number
+    title: string
+    body: string | null
+    diff: string | null
+    author: string
+    mergedAt: Date | null
+  }>
+): Promise<ExtractionResult> {
+  const apiKey = process.env.ANTHROPIC_API_KEY
+
+  if (!apiKey) {
+    throw new ExtractionError('ANTHROPIC_API_KEY not configured')
+  }
+
+  const client = new Anthropic({ apiKey })
+
+  const userPrompt = createExtractionPrompt(artifacts)
+
+  const response = await client.messages.create({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 4096,
+    system: EXTRACTION_SYSTEM_PROMPT,
+    messages: [
+      {
+        role: 'user',
+        content: userPrompt,
+      },
+    ],
+  })
+
+  // Parse response
+  const textContent = response.content.find((c) => c.type === 'text')
+  if (!textContent || textContent.type !== 'text') {
+    throw new ExtractionError('No text content in Claude response')
+  }
+
+  let parsed: { decisions: unknown[] }
+  try {
+    parsed = JSON.parse(textContent.text)
+  } catch {
+    throw new ExtractionError('Failed to parse JSON from Claude response')
+  }
+
+  // Validate each decision
+  const decisions: DecisionExtraction[] = []
+  for (const decision of parsed.decisions) {
+    try {
+      const validated = DecisionExtractionSchema.parse(decision)
+      decisions.push(validated)
+    } catch (error) {
+      console.error('Invalid decision format:', error)
+    }
+  }
+
+  // Calculate cost
+  const inputTokens = response.usage.input_tokens
+  const outputTokens = response.usage.output_tokens
+  const totalCost = calculateCost('claude-sonnet-4', inputTokens, outputTokens)
+
+  return {
+    decisions,
+    model: 'claude-sonnet-4',
+    inputTokens,
+    outputTokens,
+    totalCost,
+  }
+}
 
 /**
- * Extract decisions from artifacts using LLM
+ * Extract decisions using GPT-4o (fallback)
+ */
+async function extractWithGPT4o(
+  artifacts: Array<{
+    number: number
+    title: string
+    body: string | null
+    diff: string | null
+    author: string
+    mergedAt: Date | null
+  }>
+): Promise<ExtractionResult> {
+  const apiKey = process.env.OPENAI_API_KEY
+
+  if (!apiKey) {
+    throw new ExtractionError('OPENAI_API_KEY not configured')
+  }
+
+  const client = new OpenAI({ apiKey })
+
+  const userPrompt = createExtractionPrompt(artifacts)
+
+  const response = await client.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [
+      { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
+      { role: 'user', content: userPrompt },
+    ],
+    response_format: { type: 'json_object' },
+    max_tokens: 4096,
+  })
+
+  // Parse response
+  const content = response.choices[0]?.message?.content
+  if (!content) {
+    throw new ExtractionError('No content in GPT-4o response')
+  }
+
+  let parsed: { decisions: unknown[] }
+  try {
+    parsed = JSON.parse(content)
+  } catch {
+    throw new ExtractionError('Failed to parse JSON from GPT-4o response')
+  }
+
+  // Validate each decision
+  const decisions: DecisionExtraction[] = []
+  for (const decision of parsed.decisions) {
+    try {
+      const validated = DecisionExtractionSchema.parse(decision)
+      decisions.push(validated)
+    } catch (error) {
+      console.error('Invalid decision format:', error)
+    }
+  }
+
+  // Calculate cost (estimate since OpenAI doesn't always return usage)
+  const inputTokens = response.usage?.prompt_tokens ?? estimateTokens(userPrompt)
+  const outputTokens = response.usage?.completion_tokens ?? estimateTokens(content)
+  const totalCost = calculateCost('gpt-4o', inputTokens, outputTokens)
+
+  return {
+    decisions,
+    model: 'gpt-4o',
+    inputTokens,
+    outputTokens,
+    totalCost,
+  }
+}
+
+/**
+ * Extract architectural decisions from artifacts
+ *
+ * Tries Claude first, falls back to GPT-4o on error
  */
 export async function extractDecisions(
-    repoId: string,
-    syncRunId: string
+  artifacts: Array<{
+    number: number
+    title: string
+    body: string | null
+    diff: string | null
+    author: string
+    mergedAt: Date | null
+  }>
 ): Promise<ExtractionResult> {
-    const result: ExtractionResult = {
-        candidatesCreated: 0,
-        candidatesSkipped: 0,
-        tokensInput: 0,
-        tokensOutput: 0,
-        errors: [],
-    };
+  // Try Claude first
+  try {
+    return await extractWithClaude(artifacts)
+  } catch (error) {
+    console.error('Claude extraction failed, falling back to GPT-4o:', error)
 
-    // Check budget
-    const budget = await checkExtractionBudget(repoId);
-    if (!budget.allowed) {
-        result.errors.push(budget.message || 'Budget exceeded');
-        return result;
+    // Fall back to GPT-4o
+    try {
+      return await extractWithGPT4o(artifacts)
+    } catch (fallbackError) {
+      throw new ExtractionError(
+        'Both Claude and GPT-4o extraction failed',
+        { claudeError: error, gpt4oError: fallbackError }
+      )
     }
-
-    // Get artifacts that passed sieve
-    const artifacts = await prisma.artifact.findMany({
-        where: {
-            repoId,
-            processingStatus: 'sieved_in',
-        },
-        take: budget.remaining * BATCH_SIZE,
-    });
-
-    if (artifacts.length === 0) {
-        return result;
-    }
-
-    // Process in batches
-    for (let i = 0; i < artifacts.length; i += BATCH_SIZE) {
-        const batch = artifacts.slice(i, i + BATCH_SIZE);
-
-        try {
-            const extracted = await callLLM(batch);
-            result.tokensInput += extracted.tokensInput;
-            result.tokensOutput += extracted.tokensOutput;
-
-            // Process each extraction result
-            for (let j = 0; j < batch.length; j++) {
-                const artifact = batch[j];
-                const decision = extracted.items[j];
-
-                if (!decision) {
-                    await markArtifactFailed(artifact.id, 'No extraction result');
-                    continue;
-                }
-
-                if (decision.isDecision) {
-                    // Create candidate
-                    await createCandidate(repoId, artifact, decision);
-                    result.candidatesCreated++;
-                } else {
-                    // Mark as extracted but not a decision
-                    result.candidatesSkipped++;
-                }
-
-                // Update artifact status
-                await prisma.artifact.update({
-                    where: { id: artifact.id },
-                    data: {
-                        processingStatus: 'extracted',
-                        extractedAt: new Date(),
-                    },
-                });
-            }
-
-            // Increment extraction count
-            await incrementExtractionCount(repoId, 1);
-
-        } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            result.errors.push(`Batch ${i / BATCH_SIZE}: ${errorMessage}`);
-
-            // Mark artifacts as failed
-            for (const artifact of batch) {
-                await markArtifactFailed(artifact.id, errorMessage);
-            }
-        }
-    }
-
-    return result;
+  }
 }
-
-/**
- * Call LLM to extract decisions
- */
-async function callLLM(
-    artifacts: Artifact[]
-): Promise<{
-    items: ExtractedDecision[];
-    tokensInput: number;
-    tokensOutput: number;
-}> {
-    // Determine which provider to use
-    const provider = getProvider();
-
-    // Format artifacts for LLM
-    const formattedArtifacts = artifacts.map((a, i) =>
-        `--- Artifact ${i + 1} ---\n${formatArtifactForLLM(a)}`
-    ).join('\n\n');
-
-    const userMessage = `Analyze the following ${artifacts.length} artifact(s) and extract any architectural decisions:\n\n${formattedArtifacts}`;
-
-    if (provider === 'claude') {
-        return callClaude(userMessage);
-    } else {
-        return callOpenAI(userMessage);
-    }
-}
-
-/**
- * Get the available LLM provider
- */
-function getProvider(): LLMProvider {
-    if (process.env.ANTHROPIC_API_KEY) {
-        return 'claude';
-    }
-    if (process.env.OPENAI_API_KEY) {
-        return 'openai';
-    }
-    throw new Error('No LLM API key configured (ANTHROPIC_API_KEY or OPENAI_API_KEY)');
-}
-
-/**
- * Call Claude API
- */
-async function callClaude(userMessage: string): Promise<{
-    items: ExtractedDecision[];
-    tokensInput: number;
-    tokensOutput: number;
-}> {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': process.env.ANTHROPIC_API_KEY!,
-            'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-            model: 'claude-3-haiku-20240307',
-            max_tokens: 4096,
-            system: EXTRACTION_PROMPT,
-            messages: [{ role: 'user', content: userMessage }],
-        }),
-    });
-
-    if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`Claude API error: ${response.status} - ${error}`);
-    }
-
-    const data = await response.json();
-
-    // Extract JSON from response
-    const content = data.content?.[0]?.text || '';
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-
-    if (!jsonMatch) {
-        throw new Error('No JSON found in Claude response');
-    }
-
-    const parsed = JSON.parse(jsonMatch[0]);
-    const validated = ExtractionResponseSchema.parse(parsed);
-
-    return {
-        items: validated.items,
-        tokensInput: data.usage?.input_tokens || 0,
-        tokensOutput: data.usage?.output_tokens || 0,
-    };
-}
-
-/**
- * Call OpenAI API
- */
-async function callOpenAI(userMessage: string): Promise<{
-    items: ExtractedDecision[];
-    tokensInput: number;
-    tokensOutput: number;
-}> {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-        },
-        body: JSON.stringify({
-            model: 'gpt-4o-mini',
-            response_format: { type: 'json_object' },
-            messages: [
-                { role: 'system', content: EXTRACTION_PROMPT },
-                { role: 'user', content: userMessage },
-            ],
-            max_tokens: 4096,
-        }),
-    });
-
-    if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`OpenAI API error: ${response.status} - ${error}`);
-    }
-
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || '';
-
-    const parsed = JSON.parse(content);
-    const validated = ExtractionResponseSchema.parse(parsed);
-
-    return {
-        items: validated.items,
-        tokensInput: data.usage?.prompt_tokens || 0,
-        tokensOutput: data.usage?.completion_tokens || 0,
-    };
-}
-
-/**
- * Create a candidate from extraction
- */
-async function createCandidate(
-    repoId: string,
-    artifact: Artifact,
-    decision: ExtractedDecision
-): Promise<void> {
-    const dedupeKey = `artifact:${artifact.id}`;
-
-    // Upsert candidate (skip if exists)
-    await prisma.candidate.upsert({
-        where: {
-            repoId_dedupeKey: {
-                repoId,
-                dedupeKey,
-            },
-        },
-        update: {}, // No update if exists
-        create: {
-            repoId,
-            dedupeKey,
-            title: decision.title,
-            summary: decision.summary,
-            context: decision.context,
-            decision: decision.decision,
-            consequences: decision.consequences,
-            confidence: decision.confidence,
-            impact: decision.impact,
-            risk: decision.risk,
-            suggestedTags: decision.suggestedTags || [],
-            evidence: {
-                create: {
-                    artifactId: artifact.id,
-                    role: 'primary',
-                },
-            },
-        },
-    });
-
-    // Update repo candidate count
-    await prisma.repo.update({
-        where: { id: repoId },
-        data: {
-            candidateCount: { increment: 1 },
-        },
-    });
-}
-
-/**
- * Mark artifact as failed extraction
- */
-async function markArtifactFailed(artifactId: string, error: string): Promise<void> {
-    await prisma.artifact.update({
-        where: { id: artifactId },
-        data: {
-            processingStatus: 'extract_failed',
-            extractError: error,
-            extractedAt: new Date(),
-        },
-    });
-}
-
-export { getProvider };

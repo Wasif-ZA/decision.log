@@ -1,113 +1,125 @@
-// ===========================================
-// Approve Candidate Route
-// ===========================================
-// Creates a Decision from an approved Candidate
-
-import { NextResponse } from 'next/server';
-import { requireAuth } from '@/lib/auth/requireAuth';
-import { handleError, NotFoundError } from '@/lib/errors';
-import { prisma } from '@/lib/db';
-
-export const dynamic = 'force-dynamic';
-
-interface RouteParams {
-    params: Promise<{ id: string }>;
-}
-
 /**
+ * Approve Candidate (Extract Decision)
+ *
  * POST /api/candidates/[id]/approve
- * Approve a candidate and create a Decision
+ * Extract decision from a candidate
  */
-export async function POST(request: Request, { params }: RouteParams) {
+
+import { NextRequest, NextResponse } from 'next/server'
+import { requireAuth } from '@/lib/auth/requireAuth'
+import { handleError } from '@/lib/errors'
+import { db } from '@/lib/db'
+import { extractDecisions } from '@/lib/extract/client'
+import { enforceExtractionLimit, recordExtractionCost } from '@/lib/extract/governor'
+
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  return requireAuth(async (request, { user }) => {
     try {
-        const { userId } = await requireAuth();
-        const { id: candidateId } = await params;
+      const { id: candidateId } = await params
 
-        // Get candidate with repo info
-        const candidate = await prisma.candidate.findUnique({
-            where: { id: candidateId },
-            include: {
-                repo: {
-                    select: {
-                        id: true,
-                        userId: true,
-                    },
-                },
-                evidence: true,
-            },
-        });
+      // Get candidate with artifact
+      const candidate = await db.candidate.findUnique({
+        where: { id: candidateId },
+        include: {
+          artifact: true,
+          repo: true,
+        },
+      })
 
-        if (!candidate) {
-            throw new NotFoundError('Candidate');
-        }
+      if (!candidate) {
+        return NextResponse.json(
+          { code: 'NOT_FOUND', message: 'Candidate not found' },
+          { status: 404 }
+        )
+      }
 
-        // Verify user owns the repo
-        if (candidate.repo.userId !== userId) {
-            throw new NotFoundError('Candidate');
-        }
+      if (candidate.userId !== user.id) {
+        return NextResponse.json(
+          { code: 'FORBIDDEN', message: 'Access denied' },
+          { status: 403 }
+        )
+      }
 
-        // Check if already approved
-        if (candidate.status === 'approved') {
-            return NextResponse.json({
-                success: false,
-                error: 'Candidate already approved',
-            }, { status: 400 });
-        }
+      // Check extraction limit
+      await enforceExtractionLimit(candidate.repoId)
 
-        // Create Decision and update Candidate in transaction
-        const decision = await prisma.$transaction(async (tx) => {
-            // Create Decision
-            const decision = await tx.decision.create({
-                data: {
-                    repoId: candidate.repoId,
-                    createdByUserId: userId,
-                    title: candidate.title,
-                    context: candidate.context,
-                    decision: candidate.decision || candidate.summary,
-                    consequences: candidate.consequences,
-                    impact: candidate.impact,
-                    sourceType: 'candidate',
-                    sourceCandidateId: candidateId,
-                    evidence: {
-                        create: candidate.evidence.map(e => ({
-                            artifactId: e.artifactId,
-                            role: e.role,
-                        })),
-                    },
-                },
-            });
+      // Extract decision
+      const result = await extractDecisions([
+        {
+          number: candidate.artifact.githubId,
+          title: candidate.artifact.title,
+          body: candidate.artifact.body,
+          diff: candidate.artifact.diff,
+          author: candidate.artifact.author,
+          mergedAt: candidate.artifact.mergedAt,
+        },
+      ])
 
-            // Update Candidate
-            await tx.candidate.update({
-                where: { id: candidateId },
-                data: {
-                    status: 'approved',
-                    approvedAt: new Date(),
-                    promotedToId: decision.id,
-                },
-            });
+      // If no decisions extracted, return error
+      if (result.decisions.length === 0) {
+        return NextResponse.json(
+          {
+            code: 'NO_DECISION',
+            message: 'No architectural decision found in this PR',
+          },
+          { status: 400 }
+        )
+      }
 
-            // Update repo counts
-            await tx.repo.update({
-                where: { id: candidate.repoId },
-                data: {
-                    decisionCount: { increment: 1 },
-                },
-            });
+      const extracted = result.decisions[0]
 
-            return decision;
-        });
+      // Create decision
+      const decision = await db.decision.create({
+        data: {
+          repoId: candidate.repoId,
+          candidateId: candidate.id,
+          userId: user.id,
+          title: extracted.title,
+          context: extracted.context,
+          decision: extracted.decision,
+          reasoning: extracted.reasoning,
+          consequences: extracted.consequences,
+          alternatives: extracted.alternatives,
+          tags: extracted.tags,
+          significance: extracted.significance,
+          extractedBy: result.model,
+          rawResponse: extracted as any,
+        },
+      })
 
-        return NextResponse.json({
-            success: true,
-            decision: {
-                id: decision.id,
-                title: decision.title,
-                createdAt: decision.createdAt,
-            },
-        });
+      // Update candidate status
+      await db.candidate.update({
+        where: { id: candidateId },
+        data: {
+          status: 'extracted',
+          extractedAt: new Date(),
+        },
+      })
 
+      // Record cost
+      await recordExtractionCost(candidate.repoId, user.id, {
+        model: result.model,
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+        totalCost: result.totalCost,
+        batchSize: 1,
+        candidateIds: [candidateId],
+      })
+
+      return NextResponse.json({ decision })
     } catch (error) {
-        return handleError(error);
+      const formatted = handleError(error)
+      return NextResponse.json(
+        {
+          code: formatted.code,
+          message: formatted.message,
+          details: formatted.details,
+        },
+        { status: formatted.statusCode }
+      )
     }
+  })(req)
 }
