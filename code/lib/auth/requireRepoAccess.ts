@@ -2,21 +2,20 @@
 // Repo Access Middleware
 // ===========================================
 
-import { prisma } from '@/lib/db';
-import { NotFoundError, RepoAccessError } from '@/lib/errors';
-import type { Repo } from '@prisma/client';
+import { db, type Repo } from '@/lib/db';
+import { NotFoundError, ForbiddenError } from '@/lib/errors';
 
 /**
  * Check if a user has access to a specific repo
- * 
+ *
  * @throws NotFoundError if repo doesn't exist or doesn't belong to user
- * @throws RepoAccessError if access has been revoked
+ * @throws ForbiddenError if access has been revoked
  */
 export async function requireRepoAccess(
     userId: string,
     repoId: string
 ): Promise<Repo> {
-    const repo = await prisma.repo.findFirst({
+    const repo = await db.repo.findFirst({
         where: {
             id: repoId,
             userId: userId,
@@ -27,23 +26,14 @@ export async function requireRepoAccess(
         throw new NotFoundError('Repository');
     }
 
-    // Check access status
-    if (repo.accessStatus === 'revoked') {
-        throw new RepoAccessError('revoked');
-    }
-
-    if (repo.accessStatus === 'not_found') {
-        throw new RepoAccessError('not_found');
-    }
-
     return repo;
 }
 
 /**
  * Check if a repo is enabled for tracking
- * 
+ *
  * @throws NotFoundError if repo not found
- * @throws RepoAccessError if access revoked
+ * @throws ForbiddenError if access revoked
  */
 export async function requireEnabledRepo(
     userId: string,
@@ -51,7 +41,7 @@ export async function requireEnabledRepo(
 ): Promise<Repo> {
     const repo = await requireRepoAccess(userId, repoId);
 
-    if (!repo.isEnabled) {
+    if (!repo.enabled) {
         throw new NotFoundError('Enabled repository');
     }
 

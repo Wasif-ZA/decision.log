@@ -51,11 +51,19 @@ export const GET = requireAuth(async (req, { user }) => {
     })
 
     const existingMap = new Map(
-      existingRepos.map((r: any) => [r.fullName, r.enabled])
+      existingRepos.map((r: { fullName: string; enabled: boolean }) => [r.fullName, r.enabled])
     )
 
-    // Format response
-    const repos = githubRepos.map((repo: any) => ({
+    // Format response - githubRepos is from GitHub API
+    interface GitHubRepo {
+      id: number
+      name: string
+      full_name: string
+      owner: { login: string }
+      private: boolean
+      default_branch: string
+    }
+    const repos = (githubRepos as GitHubRepo[]).map((repo) => ({
       id: repo.id,
       name: repo.name,
       fullName: repo.full_name,
