@@ -166,3 +166,88 @@ export interface SyncStatusResponse {
     progress?: number; // 0-100
     error?: string;
 }
+
+// ─────────────────────────────────────────────
+// Timeline & Decisions
+// ─────────────────────────────────────────────
+
+export interface Artifact {
+    id: string;
+    githubId: number;
+    type: 'pr' | 'commit';
+    url: string;
+    title: string;
+    author: string;
+    authoredAt: string;
+    mergedAt: string | null;
+    body: string | null;
+    filesChanged: number;
+    additions: number;
+    deletions: number;
+}
+
+export interface Candidate {
+    id: string;
+    sieveScore: number;
+    scoreBreakdown: Record<string, unknown>;
+    status: 'pending' | 'extracted' | 'dismissed' | 'failed';
+    extractedAt: string | null;
+    dismissedAt: string | null;
+    artifact: Artifact;
+}
+
+export interface DecisionDetail {
+    id: string;
+    title: string;
+    context: string;
+    decision: string;
+    reasoning: string;
+    consequences: string;
+    alternatives: string | null;
+    tags: string[];
+    significance: number;
+    extractedBy: string;
+    createdAt: string;
+    candidate: Candidate;
+    repo?: {
+        id: string;
+        fullName: string;
+    };
+}
+
+export interface TimelineResponse {
+    decisions: DecisionDetail[];
+}
+
+export interface CandidatesResponse {
+    candidates: Candidate[];
+}
+
+export interface DecisionResponse {
+    decision: DecisionDetail;
+}
+
+export interface ExportResponse {
+    repo: {
+        fullName: string;
+    };
+    decisions: Array<{
+        id: string;
+        title: string;
+        context: string;
+        decision: string;
+        reasoning: string;
+        consequences: string;
+        alternatives: string | null;
+        tags: string[];
+        significance: number;
+        createdAt: string;
+        source: {
+            type: string;
+            url: string;
+            title: string;
+            author: string;
+            mergedAt: string | null;
+        };
+    }>;
+}

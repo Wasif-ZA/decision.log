@@ -6,5 +6,5 @@ export default async function DecisionPage({
     params: Promise<{ id: string }>;
 }) {
     const { id } = await params;
-    return <DecisionDetail />;
+    return <DecisionDetail decisionId={id} />;
 }

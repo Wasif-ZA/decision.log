@@ -16,6 +16,7 @@ import {
     ChevronLeft,
     ChevronRight,
     X,
+    ListChecks,
 } from 'lucide-react';
 import { useAppState } from '@/context/AppContext';
 
@@ -26,6 +27,7 @@ import { useAppState } from '@/context/AppContext';
 const NAV_ITEMS = [
     { label: 'Timeline', href: '/timeline', icon: Clock },
     { label: 'Decisions', href: '/decisions', icon: FileText },
+    { label: 'Review', href: '/candidates', icon: ListChecks },
     { label: 'Prompts', href: '/prompts', icon: Sparkles },
     { label: 'Exports', href: '/exports', icon: Download },
     { label: 'Settings', href: '/settings', icon: Settings },
