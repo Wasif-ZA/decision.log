@@ -1,0 +1,334 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// USER & AUTHENTICATION
+// ═══════════════════════════════════════════════════════════════════════════
+
+model User {
+  id            String    @id @default(cuid())
+  githubId      String    @unique
+  login         String
+  email         String?
+  name          String?
+  avatarUrl     String?
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  integration   Integration?
+  repos         Repo[]
+  decisions     Decision[]
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GITHUB INTEGRATION
+// ═══════════════════════════════════════════════════════════════════════════
+
+model Integration {
+  id                    String    @id @default(cuid())
+  userId                String    @unique
+  provider              String    @default("github")
+  
+  // Token storage (encrypted with AES-256-GCM)
+  accessTokenEncrypted  String
+  tokenScopes           String[]
+  tokenType             String?   // "bearer" (future-proofing)
+  expiresAt             DateTime? // For future refresh token support
+  
+  // Token validation state
+  isValid               Boolean   @default(true)
+  lastValidatedAt       DateTime?
+  invalidReason         String?
+  
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  repos                 Repo[]
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// REPOSITORIES
+// ═══════════════════════════════════════════════════════════════════════════
+
+model Repo {
+  id              String    @id @default(cuid())
+  userId          String
+  integrationId   String
+  
+  // GitHub identifiers
+  githubId        String
+  owner           String
+  name            String
+  fullName        String    // "owner/name"
+  defaultBranch   String    @default("main")
+  isPrivate       Boolean   @default(false)
+  
+  // Tracking state
+  isEnabled       Boolean   @default(false)
+  enabledAt       DateTime?
+  accessStatus    String    @default("active") // active | revoked | not_found
+  
+  // Sync state
+  lastSyncAt      DateTime?
+  lastSyncStatus  String?   // 'complete' | 'failed'
+  syncCursor      Json      @default("{}")
+  // Schema: { prUpdatedAfter: ISO string, commitSince: ISO string }
+  
+  // First sync handling
+  hasCompletedFirstSync Boolean @default(false)
+  
+  // Cost tracking (resets daily)
+  extractionsToday   Int       @default(0)
+  extractionResetAt  DateTime?
+  
+  // Denormalized counts
+  artifactCount      Int       @default(0)
+  candidateCount     Int       @default(0)
+  decisionCount      Int       @default(0)
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  integration     Integration @relation(fields: [integrationId], references: [id])
+  syncRuns        SyncRun[]
+  artifacts       Artifact[]
+  candidates      Candidate[]
+  decisions       Decision[]
+
+  @@unique([userId, githubId])
+  @@index([userId, isEnabled])
+  @@index([integrationId])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SYNC RUNS (Observability & Recovery)
+// ═══════════════════════════════════════════════════════════════════════════
+
+model SyncRun {
+  id              String    @id @default(cuid())
+  repoId          String
+  
+  // Status: pending → fetching → sieving → extracting → complete | failed
+  status          String    @default("pending")
+  
+  // Phase metrics
+  prsFetched      Int       @default(0)
+  commitsFetched  Int       @default(0)
+  artifactsCreated Int      @default(0)
+  artifactsUpdated Int      @default(0)
+  artifactsSievedIn Int     @default(0)
+  artifactsSievedOut Int    @default(0)
+  candidatesCreated Int     @default(0)
+  candidatesSkipped Int     @default(0)
+  
+  // LLM metrics
+  extractionBatches Int     @default(0)
+  tokensInput     Int       @default(0)
+  tokensOutput    Int       @default(0)
+  
+  // Timing
+  startedAt       DateTime  @default(now())
+  fetchDoneAt     DateTime?
+  sieveDoneAt     DateTime?
+  extractDoneAt   DateTime?
+  completedAt     DateTime?
+  
+  // Error tracking
+  errorPhase      String?   // 'fetch' | 'sieve' | 'extract'
+  errorCode       String?
+  errorMessage    String?
+  
+  // Cursor snapshot
+  cursorBefore    Json?
+  cursorAfter     Json?
+
+  repo            Repo      @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  logs            SyncRunLog[]
+
+  @@index([repoId, status])
+  @@index([repoId, startedAt])
+}
+
+model SyncRunLog {
+  id        String   @id @default(cuid())
+  syncRunId String
+  level     String   // debug | info | warn | error
+  message   String
+  data      Json?
+  createdAt DateTime @default(now())
+
+  syncRun   SyncRun  @relation(fields: [syncRunId], references: [id], onDelete: Cascade)
+
+  @@index([syncRunId, createdAt])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ARTIFACTS (Normalized GitHub Objects)
+// ═══════════════════════════════════════════════════════════════════════════
+
+model Artifact {
+  id              String    @id @default(cuid())
+  repoId          String
+  
+  // Identity (composite unique key)
+  type            String    // 'pr' | 'commit'
+  externalId      String    // PR number (string) or commit SHA
+  
+  // Content
+  title           String
+  body            String?   @db.Text
+  url             String
+  authorLogin     String?
+  
+  // PR-specific fields
+  prNumber        Int?
+  prState         String?   // 'open' | 'closed'
+  isMerged        Boolean?
+  mergedAt        DateTime?
+  labels          String[]
+  
+  // Commit-specific fields
+  commitSha       String?
+  
+  // Diff statistics
+  additions       Int?
+  deletions       Int?
+  changedFiles    Int?
+  filePaths       String[]  // Truncated to first 100
+  
+  // Processing state
+  processingStatus String   @default("pending")
+  // Values: 'pending' | 'sieved_out' | 'sieved_in' | 'extracted' | 'extract_failed' | 'skipped'
+  
+  // Sieve results
+  sieveScore      Int?
+  sieveRules      Json?
+  sievedAt        DateTime?
+  
+  // Extraction tracking
+  extractedAt     DateTime?
+  extractError    String?
+  
+  // Source timestamps
+  createdAtSource DateTime
+  updatedAtSource DateTime?
+  
+  ingestedAt      DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  repo            Repo      @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  candidateLinks  CandidateEvidence[]
+  decisionLinks   DecisionEvidence[]
+
+  @@unique([repoId, type, externalId])
+  @@index([repoId, type])
+  @@index([repoId, processingStatus])
+  @@index([repoId, sieveScore])
+  @@index([repoId, createdAtSource])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CANDIDATES (LLM Extraction Output - Decisions Only)
+// ═══════════════════════════════════════════════════════════════════════════
+
+model Candidate {
+  id              String    @id @default(cuid())
+  repoId          String
+  dedupeKey       String    // Format: "artifact:{artifactId}"
+  status          String    @default("new") // new | approved | dismissed
+  
+  // LLM extraction output
+  title           String
+  summary         String    @db.Text
+  context         String?   @db.Text
+  decision        String?   @db.Text
+  consequences    String?   @db.Text
+  confidence      Float     // 0.0 - 1.0
+  impact          String?   // 'low' | 'medium' | 'high'
+  risk            String?   // 'low' | 'medium' | 'high'
+  suggestedTags   String[]
+  
+  // Dismissal tracking
+  dismissedAt     DateTime?
+  dismissReason   String?   // 'not_decision' | 'too_minor' | 'duplicate' | 'incorrect' | 'other'
+  dismissNote     String?
+  
+  // Approval tracking
+  approvedAt      DateTime?
+  promotedToId    String?
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  repo            Repo      @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  evidence        CandidateEvidence[]
+
+  @@unique([repoId, dedupeKey])
+  @@index([repoId, status])
+  @@index([repoId, status, createdAt])
+}
+
+model CandidateEvidence {
+  id          String    @id @default(cuid())
+  candidateId String
+  artifactId  String
+  role        String    @default("primary")
+  createdAt   DateTime  @default(now())
+
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  artifact    Artifact  @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+
+  @@unique([candidateId, artifactId])
+  @@index([artifactId])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DECISIONS (Approved, Canonical Records)
+// ═══════════════════════════════════════════════════════════════════════════
+
+model Decision {
+  id              String    @id @default(cuid())
+  repoId          String
+  createdByUserId String
+  
+  title           String
+  context         String?   @db.Text
+  decision        String    @db.Text
+  consequences    String?   @db.Text
+  impact          String?
+  
+  sourceType      String    @default("candidate")
+  sourceCandidateId String?
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  repo            Repo      @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  createdBy       User      @relation(fields: [createdByUserId], references: [id])
+  evidence        DecisionEvidence[]
+
+  @@index([repoId, createdAt])
+}
+
+model DecisionEvidence {
+  id         String   @id @default(cuid())
+  decisionId String
+  artifactId String
+  role       String   @default("primary")
+  createdAt  DateTime @default(now())
+
+  decision   Decision @relation(fields: [decisionId], references: [id], onDelete: Cascade)
+  artifact   Artifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+
+  @@unique([decisionId, artifactId])
+  @@index([artifactId])
+}

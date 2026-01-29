@@ -19,18 +19,30 @@ export function ErrorState({
     className = '',
 }: ErrorStateProps) {
     return (
-        <div className={`flex flex-col items-center justify-center py-12 px-4 text-center ${className}`}>
-            <div className="mb-4 text-red-500">
-                <AlertCircle className="w-12 h-12" strokeWidth={1.5} />
+        <div
+            className={`
+                flex flex-col items-center justify-center py-16 px-6 text-center
+                animate-[fade-in_0.4s_ease-out]
+                ${className}
+            `}
+        >
+            <div className="mb-6 relative">
+                <div className="absolute inset-0 bg-red-100 rounded-full blur-xl opacity-60" />
+                <div className="relative p-4 bg-gradient-to-br from-red-50 to-red-100 rounded-full">
+                    <AlertCircle
+                        className="w-10 h-10 text-red-500"
+                        strokeWidth={1.5}
+                    />
+                </div>
             </div>
-            <h3 className="text-lg font-medium text-base-900 mb-2">
+            <h3 className="text-lg font-semibold text-base-900 mb-2">
                 {title}
             </h3>
-            <p className="text-sm text-base-500 max-w-md mb-6">
+            <p className="text-sm text-base-500 max-w-md mb-8 leading-relaxed">
                 {message}
             </p>
             {onRetry && (
-                <Button onClick={onRetry} variant="secondary">
+                <Button onClick={onRetry} variant="secondary" className="gap-2">
                     <RefreshCw className="w-4 h-4" />
                     Try Again
                 </Button>
@@ -84,3 +96,4 @@ export function RateLimitedState({ retryAfter }: { retryAfter?: number }) {
         />
     );
 }
+

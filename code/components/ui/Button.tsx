@@ -16,16 +16,36 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const variantStyles: Record<ButtonVariant, string> = {
-    primary: 'bg-base-900 text-white hover:bg-base-800 focus-visible:ring-base-500',
-    secondary: 'bg-base-100 text-base-900 hover:bg-base-200 border border-base-300 focus-visible:ring-base-400',
-    ghost: 'bg-transparent text-base-600 hover:bg-base-100 hover:text-base-900 focus-visible:ring-base-400',
-    danger: 'bg-red-600 text-white hover:bg-red-700 focus-visible:ring-red-500',
+    primary: `
+        bg-gradient-to-r from-base-800 via-base-900 to-base-950 text-white
+        hover:from-base-700 hover:via-base-800 hover:to-base-900
+        shadow-md hover:shadow-lg hover:shadow-base-900/20
+        focus-visible:ring-accent-400
+    `,
+    secondary: `
+        bg-white text-base-900 
+        border border-base-200 hover:border-base-300
+        shadow-sm hover:shadow-md
+        hover:bg-base-50
+        focus-visible:ring-base-400
+    `,
+    ghost: `
+        bg-transparent text-base-600 
+        hover:bg-base-100 hover:text-base-900
+        focus-visible:ring-base-400
+    `,
+    danger: `
+        bg-gradient-to-r from-red-500 to-red-600 text-white
+        hover:from-red-600 hover:to-red-700
+        shadow-md hover:shadow-lg hover:shadow-red-500/20
+        focus-visible:ring-red-400
+    `,
 };
 
 const sizeStyles: Record<ButtonSize, string> = {
-    sm: 'px-3 py-1.5 text-sm',
-    md: 'px-4 py-2 text-sm',
-    lg: 'px-6 py-3 text-base',
+    sm: 'px-3.5 py-1.5 text-sm',
+    md: 'px-5 py-2.5 text-sm',
+    lg: 'px-7 py-3.5 text-base',
 };
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
@@ -37,14 +57,16 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
                 ref={ref}
                 disabled={isDisabled}
                 className={`
-          inline-flex items-center justify-center gap-2 rounded-md font-medium
-          transition-colors duration-150
-          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2
-          disabled:opacity-50 disabled:cursor-not-allowed
-          ${variantStyles[variant]}
-          ${sizeStyles[size]}
-          ${className}
-        `}
+                    inline-flex items-center justify-center gap-2 
+                    rounded-lg font-medium
+                    transition-all duration-200 ease-out
+                    transform hover:scale-[1.02] active:scale-[0.98]
+                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2
+                    disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100
+                    ${variantStyles[variant]}
+                    ${sizeStyles[size]}
+                    ${className}
+                `}
                 {...props}
             >
                 {isLoading && (
@@ -64,3 +86,4 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
 );
 
 Button.displayName = 'Button';
+

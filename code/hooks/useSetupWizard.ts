@@ -184,7 +184,7 @@ export function useSetupWizard() {
             logEvent('wizard_completed');
 
             // Redirect to timeline
-            router.push('/app/timeline');
+            router.push('/timeline');
         } catch (error) {
             setStepStatus(5, 'error', String(error));
             logEvent('wizard_complete_error', { error: String(error) });

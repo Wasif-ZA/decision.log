@@ -44,11 +44,11 @@ export function TopBar({ onMenuClick }: TopBarProps) {
     }));
 
     return (
-        <header className="h-14 border-b border-base-200 bg-white flex items-center px-4 gap-4 flex-shrink-0">
+        <header className="h-14 border-b border-base-200/60 bg-white/80 backdrop-blur-xl flex items-center px-4 gap-4 flex-shrink-0 sticky top-0 z-30">
             {/* Mobile menu button */}
             <button
                 onClick={onMenuClick}
-                className="lg:hidden p-2 rounded hover:bg-base-100 transition-colors"
+                className="lg:hidden p-2 rounded-lg hover:bg-base-100 transition-all duration-200"
                 aria-label="Open menu"
             >
                 <Menu className="w-5 h-5 text-base-600" />
@@ -101,15 +101,18 @@ export function TopBar({ onMenuClick }: TopBarProps) {
 
             {/* Search */}
             <div className="hidden md:block w-64">
-                <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-base-400" />
+                <div className="relative group">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-base-400 transition-colors group-focus-within:text-accent-500" />
                     <input
                         type="text"
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         placeholder="Search decisions..."
-                        className="w-full pl-9 pr-3 py-2 rounded-md border border-base-300 text-sm
-                       focus:outline-none focus:ring-2 focus:ring-base-200 focus:border-base-500"
+                        className="w-full pl-9 pr-3 py-2 rounded-lg border border-base-200 text-sm
+                                   bg-white shadow-sm
+                                   transition-all duration-200
+                                   hover:border-base-300 hover:shadow-md
+                                   focus:outline-none focus:ring-2 focus:ring-accent-100 focus:border-accent-400 focus:shadow-md"
                         aria-label="Search decisions"
                     />
                 </div>
@@ -119,7 +122,7 @@ export function TopBar({ onMenuClick }: TopBarProps) {
             <div className="relative">
                 <button
                     onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-                    className="flex items-center gap-2 p-2 rounded hover:bg-base-100 transition-colors"
+                    className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-base-100 transition-all duration-200 group"
                     aria-expanded={isUserMenuOpen}
                     aria-haspopup="true"
                 >
@@ -127,14 +130,14 @@ export function TopBar({ onMenuClick }: TopBarProps) {
                         <img
                             src={user.avatarUrl}
                             alt={user.login}
-                            className="w-8 h-8 rounded-full"
+                            className="w-8 h-8 rounded-full ring-2 ring-base-200 group-hover:ring-accent-300 transition-all duration-200"
                         />
                     ) : (
-                        <div className="w-8 h-8 rounded-full bg-base-200 flex items-center justify-center">
+                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-base-100 to-base-200 flex items-center justify-center ring-2 ring-base-200 group-hover:ring-accent-300 transition-all duration-200">
                             <UserIcon className="w-4 h-4 text-base-500" />
                         </div>
                     )}
-                    <ChevronDown className="w-4 h-4 text-base-500 hidden sm:block" />
+                    <ChevronDown className={`w-4 h-4 text-base-500 hidden sm:block transition-transform duration-200 ${isUserMenuOpen ? 'rotate-180' : ''}`} />
                 </button>
 
                 {/* Dropdown */}
@@ -145,11 +148,14 @@ export function TopBar({ onMenuClick }: TopBarProps) {
                             className="fixed inset-0 z-10"
                             onClick={() => setIsUserMenuOpen(false)}
                         />
-                        <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-md shadow-lg border border-base-200 py-1 z-20">
+                        <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-xl shadow-elevated border border-base-200/60 py-1 z-20 animate-[scale-in_0.15s_ease-out]">
                             {user && (
-                                <div className="px-4 py-2 border-b border-base-100">
+                                <div className="px-4 py-3 border-b border-base-100">
                                     <p className="text-sm font-medium text-base-900 truncate">
                                         {user.login}
+                                    </p>
+                                    <p className="text-xs text-base-500 mt-0.5">
+                                        Signed in via GitHub
                                     </p>
                                 </div>
                             )}
@@ -158,7 +164,7 @@ export function TopBar({ onMenuClick }: TopBarProps) {
                                     setIsUserMenuOpen(false);
                                     logout();
                                 }}
-                                className="w-full px-4 py-2 text-left text-sm text-base-700 hover:bg-base-50 flex items-center gap-2"
+                                className="w-full px-4 py-2.5 text-left text-sm text-base-700 hover:bg-base-50 flex items-center gap-2.5 transition-colors"
                             >
                                 <LogOut className="w-4 h-4" />
                                 Log out
@@ -170,3 +176,4 @@ export function TopBar({ onMenuClick }: TopBarProps) {
         </header>
     );
 }
+

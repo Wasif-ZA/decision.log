@@ -24,15 +24,24 @@ export function EmptyState({
     className = '',
 }: EmptyStateProps) {
     return (
-        <div className={`flex flex-col items-center justify-center py-12 px-4 text-center ${className}`}>
-            <div className="mb-4 text-base-400">
-                {icon ?? <Inbox className="w-12 h-12" strokeWidth={1.5} />}
+        <div
+            className={`
+                flex flex-col items-center justify-center py-16 px-6 text-center
+                animate-[fade-in_0.4s_ease-out]
+                ${className}
+            `}
+        >
+            <div className="mb-6 relative">
+                <div className="absolute inset-0 bg-base-200 rounded-full blur-xl opacity-50" />
+                <div className="relative p-4 bg-gradient-to-br from-base-50 to-base-100 rounded-full border border-base-200">
+                    {icon ?? <Inbox className="w-10 h-10 text-base-400" strokeWidth={1.5} />}
+                </div>
             </div>
-            <h3 className="text-lg font-medium text-base-900 mb-2">
+            <h3 className="text-lg font-semibold text-base-900 mb-2">
                 {title}
             </h3>
             {description && (
-                <p className="text-sm text-base-500 max-w-md mb-6">
+                <p className="text-sm text-base-500 max-w-md mb-8 leading-relaxed">
                     {description}
                 </p>
             )}
@@ -78,3 +87,4 @@ export function NoRepoEmptyState({ onConnect }: { onConnect?: () => void }) {
         />
     );
 }
+

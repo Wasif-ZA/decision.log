@@ -6,7 +6,7 @@
 
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Github, AlertCircle } from 'lucide-react';
+import { Github, AlertCircle, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { logEvent } from '@/lib/debugLog';
 
@@ -51,10 +51,20 @@ export default function LoginPage() {
     };
 
     return (
-        <div className="min-h-screen flex items-center justify-center p-4">
-            <div className="w-full max-w-md">
+        <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden">
+            {/* Animated gradient background */}
+            <div className="absolute inset-0 gradient-animated" />
+
+            {/* Decorative elements */}
+            <div className="absolute top-1/4 left-1/4 w-64 h-64 bg-accent-200/30 rounded-full blur-3xl" />
+            <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-base-200/50 rounded-full blur-3xl" />
+
+            <div className="w-full max-w-md relative z-10 animate-[slide-up_0.5s_ease-out]">
                 {/* Logo / Brand */}
                 <div className="text-center mb-8">
+                    <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-base-800 to-base-950 shadow-elevated mb-4 animate-[float_3s_ease-in-out_infinite]">
+                        <Sparkles className="w-8 h-8 text-accent-400" />
+                    </div>
                     <h1 className="text-3xl font-bold text-base-900 mb-2">
                         decision.log
                     </h1>
@@ -64,14 +74,14 @@ export default function LoginPage() {
                 </div>
 
                 {/* Login Card */}
-                <div className="bg-white rounded-lg shadow-lg border border-base-200 p-8">
+                <div className="bg-white/70 backdrop-blur-xl rounded-2xl shadow-elevated border border-white/50 p-8">
                     <h2 className="text-xl font-semibold text-base-900 mb-6 text-center">
                         Sign in to continue
                     </h2>
 
                     {/* Error Message */}
                     {error && (
-                        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-md flex items-start gap-3">
+                        <div className="mb-6 p-4 bg-red-50/80 backdrop-blur-sm border border-red-200 rounded-xl flex items-start gap-3 animate-[scale-in_0.2s_ease-out]">
                             <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
                             <div>
                                 <p className="text-sm text-red-700">{error}</p>
@@ -91,7 +101,7 @@ export default function LoginPage() {
                     </Button>
 
                     {/* Permissions Note */}
-                    <p className="mt-6 text-xs text-base-400 text-center">
+                    <p className="mt-6 text-xs text-base-400 text-center leading-relaxed">
                         We'll request read-only access to your repositories.
                         <br />
                         You can revoke access at any time from GitHub.
@@ -119,3 +129,4 @@ function getErrorMessage(errorCode: string): string {
             return 'An error occurred during sign in. Please try again.';
     }
 }
+

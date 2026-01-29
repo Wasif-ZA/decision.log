@@ -16,11 +16,11 @@ export function AppShell({ children }: AppShellProps) {
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
     return (
-        <div className="flex min-h-screen bg-base-50">
+        <div className="flex min-h-screen bg-gradient-to-br from-base-50 via-white to-base-100">
             {/* Skip to content link for accessibility */}
             <a
                 href="#main-content"
-                className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:px-4 focus:py-2 focus:bg-white focus:rounded-md focus:shadow-lg focus:text-base-900"
+                className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:px-4 focus:py-2 focus:bg-white focus:rounded-lg focus:shadow-elevated focus:text-base-900 focus:ring-2 focus:ring-accent-400"
             >
                 Skip to content
             </a>
@@ -39,7 +39,7 @@ export function AppShell({ children }: AppShellProps) {
                 {/* Main Content */}
                 <main
                     id="main-content"
-                    className="flex-1 overflow-y-auto bg-white"
+                    className="flex-1 overflow-y-auto bg-white/50 backdrop-blur-sm"
                 >
                     {children}
                 </main>
@@ -50,3 +50,4 @@ export function AppShell({ children }: AppShellProps) {
 
 // Default export for backward compatibility
 export default AppShell;
+

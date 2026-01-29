@@ -6,13 +6,16 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { SESSION_COOKIE_NAME } from '@/lib/jwt';
 
-// Routes that require authentication
-const PROTECTED_ROUTES = ['/app', '/setup'];
+// Routes that require authentication (from (app) route group - no /app prefix)
+const PROTECTED_ROUTES = ['/timeline', '/decision', '/decisions', '/exports', '/prompts', '/settings', '/setup'];
 
 // Routes that are public
 const PUBLIC_ROUTES = ['/', '/login', '/api/auth'];
 
-export async function middleware(request: NextRequest) {
+// App routes that require setup to be complete
+const APP_ROUTES = ['/timeline', '/decision', '/decisions', '/exports', '/prompts', '/settings'];
+
+export async function proxy(request: NextRequest) {
     const { pathname } = request.nextUrl;
 
     // Skip middleware for static files and API routes (except auth)
@@ -34,7 +37,7 @@ export async function middleware(request: NextRequest) {
         pathname === route || pathname.startsWith(route)
     );
     const isSetupRoute = pathname.startsWith('/setup');
-    const isAppRoute = pathname.startsWith('/app');
+    const isAppRoute = APP_ROUTES.some(route => pathname.startsWith(route));
 
     // If not authenticated and trying to access protected route
     if (!hasSession && isProtectedRoute) {
@@ -58,14 +61,14 @@ export async function middleware(request: NextRequest) {
                     return NextResponse.redirect(new URL('/setup', request.url));
                 }
 
-                // If setup complete and on /setup, redirect to /app/timeline
+                // If setup complete and on /setup, redirect to /timeline
                 if (setupComplete && isSetupRoute && pathname === '/setup') {
-                    return NextResponse.redirect(new URL('/app/timeline', request.url));
+                    return NextResponse.redirect(new URL('/timeline', request.url));
                 }
 
                 // If authenticated and on /login, redirect to appropriate page
                 if (pathname === '/login') {
-                    const redirectTo = setupComplete ? '/app/timeline' : '/setup';
+                    const redirectTo = setupComplete ? '/timeline' : '/setup';
                     return NextResponse.redirect(new URL(redirectTo, request.url));
                 }
             }

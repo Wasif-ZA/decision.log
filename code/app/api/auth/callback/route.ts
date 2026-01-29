@@ -1,11 +1,17 @@
 // ===========================================
 // GitHub OAuth Callback
 // ===========================================
+// Exchanges code for token, creates/updates User and Integration,
+// encrypts and stores access token in database
 
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { signJWT, getSessionCookieOptions, SESSION_COOKIE_NAME, OAUTH_STATE_COOKIE_NAME } from '@/lib/jwt';
-import { storeGitHubToken } from '@/lib/github-token';
+import { prisma } from '@/lib/db';
+import { encrypt } from '@/lib/crypto';
+
+// Transaction client type (excludes methods not available in transactions)
+type TransactionClient = Omit<typeof prisma, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>;
 
 export const dynamic = 'force-dynamic';
 
@@ -82,20 +88,77 @@ export async function GET(request: Request) {
 
         const userData = await userResponse.json();
 
-        // Store GitHub token server-side
-        await storeGitHubToken(String(userData.id), accessToken, tokenType, scope);
+        // Encrypt the access token before storing
+        const encryptedToken = await encrypt(accessToken);
 
-        // Check if this is a new user (for setupComplete)
-        // For MVP, we'll check if they have any tracked repos
-        // In production, this would be a DB lookup
-        const isNewUser = true; // MVP: always treat as new user for first-time flow
+        // Parse scopes into array
+        const tokenScopes = scope ? scope.split(',').map((s: string) => s.trim()) : [];
+
+        // Upsert User and Integration in a transaction
+        const user = await prisma.$transaction(async (tx: TransactionClient) => {
+            // Create or update User
+            const user = await tx.user.upsert({
+                where: { githubId: String(userData.id) },
+                update: {
+                    login: userData.login,
+                    email: userData.email,
+                    name: userData.name,
+                    avatarUrl: userData.avatar_url,
+                },
+                create: {
+                    githubId: String(userData.id),
+                    login: userData.login,
+                    email: userData.email,
+                    name: userData.name,
+                    avatarUrl: userData.avatar_url,
+                },
+            });
+
+            // Create or update Integration with encrypted token
+            await tx.integration.upsert({
+                where: { userId: user.id },
+                update: {
+                    accessTokenEncrypted: encryptedToken,
+                    tokenScopes,
+                    tokenType: tokenType || 'bearer',
+                    isValid: true,
+                    lastValidatedAt: new Date(),
+                    invalidReason: null,
+                },
+                create: {
+                    userId: user.id,
+                    accessTokenEncrypted: encryptedToken,
+                    tokenScopes,
+                    tokenType: tokenType || 'bearer',
+                    isValid: true,
+                    lastValidatedAt: new Date(),
+                },
+            });
+
+            return user;
+        });
+
+        // Check if user has any enabled repos (determines setupComplete)
+        const enabledRepoCount = await prisma.repo.count({
+            where: { userId: user.id, isEnabled: true },
+        });
+
+        const isNewUser = enabledRepoCount === 0;
+
+        // Fetch tracked repo IDs if any
+        const trackedRepos = await prisma.repo.findMany({
+            where: { userId: user.id, isEnabled: true },
+            select: { id: true },
+        });
+
+        const trackedRepoIds = trackedRepos.map((r: { id: string }) => r.id);
 
         // Sign JWT
         const jwt = await signJWT({
             sub: String(userData.id),
             login: userData.login,
             setupComplete: !isNewUser,
-            trackedRepoIds: [],
+            trackedRepoIds,
         });
 
         // Set session cookie
@@ -105,7 +168,7 @@ export async function GET(request: Request) {
         cookieStore.set(SESSION_COOKIE_NAME, jwt, cookieOptions);
 
         // Redirect based on setup status
-        const redirectTo = isNewUser ? '/setup' : '/app/timeline';
+        const redirectTo = isNewUser ? '/setup' : '/timeline';
         return NextResponse.redirect(new URL(redirectTo, request.url));
 
     } catch (error) {

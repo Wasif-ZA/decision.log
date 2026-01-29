@@ -24,11 +24,11 @@ import { useAppState } from '@/context/AppContext';
 // ─────────────────────────────────────────────
 
 const NAV_ITEMS = [
-    { label: 'Timeline', href: '/app/timeline', icon: Clock },
-    { label: 'Decisions', href: '/app/decisions', icon: FileText },
-    { label: 'Prompts', href: '/app/prompts', icon: Sparkles },
-    { label: 'Exports', href: '/app/exports', icon: Download },
-    { label: 'Settings', href: '/app/settings', icon: Settings },
+    { label: 'Timeline', href: '/timeline', icon: Clock },
+    { label: 'Decisions', href: '/decisions', icon: FileText },
+    { label: 'Prompts', href: '/prompts', icon: Sparkles },
+    { label: 'Exports', href: '/exports', icon: Download },
+    { label: 'Settings', href: '/settings', icon: Settings },
 ];
 
 // ─────────────────────────────────────────────
@@ -55,8 +55,8 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
 
     // Check if a nav item is active
     const isActive = (href: string) => {
-        if (href === '/app/timeline') {
-            return pathname === '/app/timeline' || pathname === '/app';
+        if (href === '/timeline') {
+            return pathname === '/timeline' || pathname === '/';
         }
         return pathname.startsWith(href);
     };
@@ -66,7 +66,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
             {/* Mobile Overlay */}
             {isOpen && (
                 <div
-                    className="fixed inset-0 bg-black/30 z-40 lg:hidden"
+                    className="fixed inset-0 bg-black/40 backdrop-blur-sm z-40 lg:hidden transition-opacity duration-300"
                     onClick={onClose}
                     aria-hidden="true"
                 />
@@ -75,18 +75,21 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
             {/* Sidebar */}
             <aside
                 className={`
-          fixed lg:sticky top-0 left-0 h-screen z-50 lg:z-auto
-          border-r border-base-200 bg-base-50
-          transition-all duration-300 ease-in-out
-          flex flex-col font-mono text-sm
-          ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
-          ${isCollapsed ? 'w-16' : 'w-64'}
-        `}
+                    fixed lg:sticky top-0 left-0 h-screen z-50 lg:z-auto
+                    bg-white/80 backdrop-blur-xl
+                    border-r border-base-200/60
+                    shadow-xl lg:shadow-none
+                    transition-all duration-300 ease-out
+                    flex flex-col font-mono text-sm
+                    ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+                    ${isCollapsed ? 'w-16' : 'w-64'}
+                `}
             >
                 {/* Header */}
-                <div className="h-14 border-b border-base-200 flex items-center px-4 justify-between bg-base-100 flex-shrink-0">
+                <div className="h-14 border-b border-base-200/60 flex items-center px-4 justify-between bg-gradient-to-r from-base-50 to-base-100/50 flex-shrink-0">
                     {!isCollapsed && (
-                        <div className="font-semibold text-base-900 truncate flex-1">
+                        <div className="font-semibold text-base-900 truncate flex-1 flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-gradient-to-r from-accent-400 to-accent-500" />
                             {repoName}
                         </div>
                     )}
@@ -94,7 +97,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                     {/* Mobile close button */}
                     <button
                         onClick={onClose}
-                        className="lg:hidden p-1 hover:bg-base-200 rounded text-base-500 hover:text-base-900 transition-colors"
+                        className="lg:hidden p-1.5 hover:bg-base-200/60 rounded-lg text-base-500 hover:text-base-900 transition-all duration-200"
                         aria-label="Close sidebar"
                     >
                         <X className="w-5 h-5" />
@@ -103,7 +106,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                     {/* Collapse button (desktop only) */}
                     <button
                         onClick={() => setIsCollapsed(!isCollapsed)}
-                        className="hidden lg:flex p-1 hover:bg-base-200 rounded text-base-500 hover:text-base-900 transition-colors"
+                        className="hidden lg:flex p-1.5 hover:bg-base-200/60 rounded-lg text-base-500 hover:text-base-900 transition-all duration-200"
                         title={isCollapsed ? 'Expand' : 'Collapse'}
                         aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
                     >
@@ -125,18 +128,23 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                             <Link
                                 key={item.href}
                                 href={item.href}
-                                onClick={onClose} // Close mobile sidebar on navigation
+                                onClick={onClose}
                                 className={`
-                  flex items-center gap-3 px-3 py-2 rounded transition-colors
-                  ${active
-                                        ? 'bg-base-200 text-base-900 font-medium'
-                                        : 'text-base-500 hover:bg-base-100 hover:text-base-900'
+                                    relative flex items-center gap-3 px-3 py-2.5 rounded-lg
+                                    transition-all duration-200 ease-out
+                                    ${active
+                                        ? 'bg-gradient-to-r from-base-100 to-base-50 text-base-900 font-medium shadow-sm'
+                                        : 'text-base-500 hover:bg-base-100/60 hover:text-base-900'
                                     }
-                  ${isCollapsed ? 'justify-center px-2' : ''}
-                `}
+                                    ${isCollapsed ? 'justify-center px-2' : ''}
+                                `}
                                 title={isCollapsed ? item.label : undefined}
                             >
-                                <Icon className="w-5 h-5 flex-shrink-0" />
+                                {/* Active indicator */}
+                                {active && !isCollapsed && (
+                                    <span className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 rounded-r-full bg-gradient-to-b from-accent-400 to-accent-500" />
+                                )}
+                                <Icon className={`w-5 h-5 flex-shrink-0 ${active ? 'text-accent-500' : ''}`} />
                                 {!isCollapsed && <span>{item.label}</span>}
                             </Link>
                         );
@@ -144,11 +152,14 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                 </nav>
 
                 {/* Footer */}
-                <div className="p-4 border-t border-base-200 text-xs text-base-400 flex-shrink-0">
+                <div className="p-4 border-t border-base-200/60 text-xs text-base-400 flex-shrink-0 bg-gradient-to-r from-base-50/50 to-transparent">
                     {!isCollapsed && (
                         <>
-                            <div>v0.1.0</div>
-                            <div className="mt-1">decision.log</div>
+                            <div className="flex items-center gap-1.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
+                                v0.1.0
+                            </div>
+                            <div className="mt-1 text-base-500">decision.log</div>
                         </>
                     )}
                 </div>
@@ -159,3 +170,4 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
 
 // Default export for backward compatibility
 export default Sidebar;
+
