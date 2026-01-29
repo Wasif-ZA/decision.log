@@ -3,13 +3,14 @@
  *
  * POST /api/repos/[id]/enable
  * Enable tracking for a repository
+ *
+ * The [id] parameter should be the GitHub numeric repository ID
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/auth/requireAuth'
 import { decrypt } from '@/lib/crypto'
-import { GitHubClient } from '@/lib/github/client'
-import { handleError } from '@/lib/errors'
+import { GitHubError, handleError } from '@/lib/errors'
 import { db } from '@/lib/db'
 
 export async function POST(
@@ -18,7 +19,7 @@ export async function POST(
 ) {
   return requireAuth(async (request, { user }) => {
     try {
-      const { id: repoFullName } = await params
+      const { id: repoId } = await params
 
       // Decrypt GitHub token
       if (!user.githubTokenEncrypted || !user.githubTokenIv) {
@@ -33,25 +34,36 @@ export async function POST(
         user.githubTokenIv
       )
 
-      const client = new GitHubClient(githubToken)
-      const [owner, repoName] = repoFullName.split('/')
+      // Fetch repo info from GitHub using numeric ID
+      const repoResponse = await fetch(`https://api.github.com/repositories/${repoId}`, {
+        headers: {
+          Authorization: `Bearer ${githubToken}`,
+          Accept: 'application/vnd.github.v3+json',
+        },
+      })
 
-      // Fetch repo info from GitHub
-      const githubRepo = await client.fetchRepository(owner, repoName)
+      if (!repoResponse.ok) {
+        throw new GitHubError('Failed to fetch repository details', repoResponse.status)
+      }
+
+      const githubRepo = await repoResponse.json()
+      const owner = githubRepo.owner.login
+      const repoName = githubRepo.name
+      const fullName = githubRepo.full_name
 
       // Create or update repo in database
       const repo = await db.repo.upsert({
         where: {
           userId_fullName: {
             userId: user.id,
-            fullName: repoFullName,
+            fullName: fullName,
           },
         },
         create: {
           githubId: githubRepo.id,
           owner,
           name: repoName,
-          fullName: repoFullName,
+          fullName: fullName,
           private: githubRepo.private,
           defaultBranch: githubRepo.default_branch,
           userId: user.id,

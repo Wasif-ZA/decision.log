@@ -1,6 +1,8 @@
 // ===========================================
 // List Branches for Repository
 // ===========================================
+//
+// The [id] parameter should be the GitHub numeric repository ID
 
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/auth/requireAuth';
@@ -9,13 +11,17 @@ import { GitHubError, handleError } from '@/lib/errors';
 
 export const dynamic = 'force-dynamic';
 
+interface GitHubBranch {
+    name: string;
+}
+
 export async function GET(
     request: NextRequest,
     { params }: { params: Promise<{ id: string }> }
 ) {
     return requireAuth(async (req, { user }) => {
         try {
-            const { id: repoFullName } = await params;
+            const { id: repoId } = await params;
 
             // Decrypt GitHub token
             if (!user.githubTokenEncrypted || !user.githubTokenIv) {
@@ -30,9 +36,8 @@ export async function GET(
                 user.githubTokenIv
             );
 
-            // Parse owner/repo from ID (which is actually the repo ID from GitHub)
-            // We need to first get the repo details to get owner/name
-            const repoResponse = await fetch(`https://api.github.com/repositories/${repoFullName}`, {
+            // Fetch repo details from GitHub using numeric ID
+            const repoResponse = await fetch(`https://api.github.com/repositories/${repoId}`, {
                 headers: {
                     Authorization: `Bearer ${githubToken}`,
                     Accept: 'application/vnd.github.v3+json',
@@ -62,11 +67,11 @@ export async function GET(
                 throw new GitHubError('Failed to fetch branches', branchesResponse.status);
             }
 
-            const branchesData = await branchesResponse.json();
-            const branches = branchesData.map((branch: any) => branch.name);
+            const branchesData: GitHubBranch[] = await branchesResponse.json();
+            const branches = branchesData.map((branch) => branch.name);
 
             return NextResponse.json({
-                repoId: repoFullName,
+                repoId,
                 branches,
             });
         } catch (error) {
