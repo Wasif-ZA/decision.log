@@ -6,7 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyJWT } from '@/lib/jwt'
+import { verifyJWT, SESSION_COOKIE_NAME } from '@/lib/jwt'
 import { db, type User } from '@/lib/db'
 import { UnauthorizedError, handleError } from '@/lib/errors'
 
@@ -34,7 +34,7 @@ export function requireAuth<T extends AuthContext>(
   return async (req: NextRequest): Promise<Response> => {
     try {
       // Extract JWT from cookie
-      const token = req.cookies.get('session')?.value
+      const token = req.cookies.get(SESSION_COOKIE_NAME)?.value
 
       if (!token) {
         throw new UnauthorizedError('No session token provided')
@@ -90,7 +90,7 @@ export function optionalAuth<T extends Partial<AuthContext>>(
 ) {
   return async (req: NextRequest): Promise<Response> => {
     try {
-      const token = req.cookies.get('session')?.value
+      const token = req.cookies.get(SESSION_COOKIE_NAME)?.value
 
       if (!token) {
         // No token, proceed without user

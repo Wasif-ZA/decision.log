@@ -12,8 +12,14 @@ export const dynamic = 'force-dynamic';
 
 export const GET = requireAuth(async (req, { user }) => {
     try {
+        // Debug: log user object keys
+        console.log('[/api/repos] user keys:', Object.keys(user));
+        console.log('[/api/repos] user.githubTokenEncrypted:', user.githubTokenEncrypted?.substring(0, 10));
+        console.log('[/api/repos] user.githubTokenIv:', user.githubTokenIv);
+
         // Decrypt GitHub token
         if (!user.githubTokenEncrypted || !user.githubTokenIv) {
+            console.log('[/api/repos] MISSING TOKEN - returning 401');
             return NextResponse.json(
                 { code: 'UNAUTHORIZED', message: 'GitHub token not found' },
                 { status: 401 }
