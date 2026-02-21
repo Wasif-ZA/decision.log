@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/auth/requireAuth'
 import { syncRepository } from '@/lib/sync/orchestrator'
 import { handleError } from '@/lib/errors'
+import { blockDemoWrites } from '@/lib/demoWriteGuard'
 
 export async function POST(
   req: NextRequest,
@@ -16,6 +17,9 @@ export async function POST(
 ) {
   return requireAuth(async (request, { user }) => {
     try {
+      const demoBlock = blockDemoWrites()
+      if (demoBlock) return demoBlock
+
       const { id: repoId } = await params
 
       // Trigger sync

@@ -1,36 +1,95 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# DecisionLog
+![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=nextdotjs)
+![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-3ECF8E?logo=supabase&logoColor=white)
+![Prisma](https://img.shields.io/badge/Prisma-ORM-2D3748?logo=prisma)
+![Tailwind CSS](https://img.shields.io/badge/TailwindCSS-4-38B2AC?logo=tailwindcss&logoColor=white)
+![Deployed on Vercel](https://img.shields.io/badge/Deployed-Vercel-black?logo=vercel)
 
-## Getting Started
+Track architecture decisions so your team never loses context.
 
-First, run the development server:
+🔗 **[Live Demo](https://decisionlog-demo.vercel.app)**
+
+![DecisionLog list view](docs/screenshots/list-view.svg)
+
+Teams constantly lose track of why technical decisions were made. As engineers rotate across projects, critical context disappears into old Slack threads, forgotten docs, and tribal knowledge. ADRs are the right pattern, but markdown files and wiki pages are hard to search and usually missing structured metadata. DecisionLog provides a dedicated system for capturing, evolving, and querying architecture decisions with rich context.
+
+## Features
+- Full-text fuzzy search to quickly retrieve past technical decisions.
+- Version history to show how proposals evolved into accepted outcomes.
+- Stakeholder tagging so teams can see ownership and contributors.
+- Impact assessments across performance, security, developer experience, and cost.
+- Filtering by status, tags, stakeholders, and date ranges.
+- Real-time-ish workflow support via sync and extraction pipelines.
+
+## More Screenshots
+**Decision detail view**
+
+![DecisionLog detail view](docs/screenshots/detail-view.svg)
+
+**Version history**
+
+![DecisionLog version history](docs/screenshots/version-history.svg)
+
+**Search results**
+
+![DecisionLog search results](docs/screenshots/search-results.svg)
+
+## Tech Stack
+- **Next.js (App Router)** — React framework and server rendering.
+- **Supabase** — managed PostgreSQL/Auth-compatible backend.
+- **Prisma** — type-safe ORM with migrations.
+- **Tailwind CSS** — utility-first UI styling.
+- **Vercel** — deployment and hosting.
+
+## Local Development
+Prerequisites: Node.js 18+, PostgreSQL (or Supabase project), GitHub OAuth app.
 
 ```bash
+git clone https://github.com/[username]/decisionlog.git
+cd decisionlog/code
+npm install
+cp .env.example .env.local
+# Fill in env values in .env.local
+npx prisma migrate dev
+npx prisma db seed
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+# Open http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Environment Variables
+```bash
+NEXT_PUBLIC_APP_URL=           # Public base URL for frontend links
+DATABASE_URL=                  # PostgreSQL connection string
+NEXT_PUBLIC_DEMO_MODE=         # true enables anonymous read-only demo mode
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+GITHUB_CLIENT_ID=              # GitHub OAuth app client id
+GITHUB_CLIENT_SECRET=          # GitHub OAuth app client secret
+GITHUB_REDIRECT_URI=           # OAuth callback URL
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+JWT_SECRET=                    # Secret used to sign session JWTs
+JWT_EXPIRES_IN=                # Session lifetime (e.g., 7d)
 
-## Learn More
+ANTHROPIC_API_KEY=             # Anthropic API key for extraction
+OPENAI_API_KEY=                # OpenAI API key for extraction
+BASE_URL=                      # Optional internal service base URL
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Project Structure
+```text
+app/              # Next.js routes and API handlers
+components/       # Reusable UI and feature components
+context/          # Global client state
+lib/              # Auth, DB, extraction, and utility modules
+prisma/           # Prisma schema, migrations, and seed script
+docs/screenshots/ # README image assets
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Roadmap
+- Slack/Teams notifications for status changes.
+- Markdown export compatible with adr-tools.
+- Team/project role-based permissions.
+- Decision templates by domain/use case.
+- AI-assisted drafting for consequences and impact predictions.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## License
+MIT
