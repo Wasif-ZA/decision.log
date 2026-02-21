@@ -6,6 +6,7 @@
 
 import { useState, useEffect } from 'react';
 import { RefreshCw, Check, AlertCircle, Loader2 } from 'lucide-react';
+import { useToast } from '@/components/ui/Toast';
 
 interface SyncButtonProps {
     repoId: string;
@@ -26,6 +27,8 @@ interface SyncState {
 
 export function SyncButton({ repoId, onSyncComplete }: SyncButtonProps) {
     const [syncState, setSyncState] = useState<SyncState>({ status: 'idle' });
+    const { warning } = useToast();
+    const isDemoMode = process.env.NEXT_PUBLIC_DEMO_MODE === 'true';
     const [polling, setPolling] = useState(false);
 
     // Poll for sync status while in progress
@@ -63,6 +66,11 @@ export function SyncButton({ repoId, onSyncComplete }: SyncButtonProps) {
     }, [polling, syncState.syncRunId, repoId, onSyncComplete]);
 
     const handleSync = async () => {
+        if (isDemoMode) {
+            warning('Sign in to make changes.');
+            return;
+        }
+
         setSyncState({ status: 'pending' });
 
         try {
@@ -133,11 +141,11 @@ export function SyncButton({ repoId, onSyncComplete }: SyncButtonProps) {
     return (
         <button
             onClick={handleSync}
-            disabled={isInProgress}
+            disabled={isInProgress || isDemoMode}
             className={`
                 inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm
                 transition-all duration-200
-                ${isInProgress
+                ${isInProgress || isDemoMode
                     ? 'bg-blue-100 text-blue-700 cursor-wait'
                     : syncState.status === 'failed'
                         ? 'bg-red-100 text-red-700 hover:bg-red-200'

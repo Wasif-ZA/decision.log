@@ -6,6 +6,8 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { verifyJWT, SESSION_COOKIE_NAME } from '@/lib/jwt';
 import type { AuthMeResponse } from '@/types/app';
+import { db } from '@/lib/db';
+import { DEMO_LOGIN, isDemoModeEnabled } from '@/lib/demoMode';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,6 +16,27 @@ export async function GET() {
     const token = cookieStore.get(SESSION_COOKIE_NAME)?.value;
 
     if (!token) {
+        if (isDemoModeEnabled) {
+            const demoUser = await db.user.findUnique({ where: { login: DEMO_LOGIN } });
+
+            if (!demoUser) {
+                return NextResponse.json(
+                    { code: 'UNAUTHORIZED', message: 'Demo user missing. Run prisma db seed.' },
+                    { status: 401 }
+                );
+            }
+
+            return NextResponse.json({
+                user: {
+                    id: demoUser.id,
+                    login: demoUser.login,
+                    avatarUrl: demoUser.avatarUrl,
+                },
+                setupComplete: true,
+                trackedRepoIds: [],
+            } satisfies AuthMeResponse);
+        }
+
         return NextResponse.json(
             { code: 'UNAUTHORIZED', message: 'Not authenticated' },
             { status: 401 }

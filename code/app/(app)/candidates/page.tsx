@@ -11,6 +11,7 @@ import { NoDataEmptyState, NoRepoEmptyState } from '@/components/ui/EmptyState';
 import { LoadingSkeleton } from '@/components/ui/LoadingSkeleton';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { Button } from '@/components/ui/Button';
+import { useToast } from '@/components/ui/Toast';
 import type { Candidate, CandidatesResponse } from '@/types/app';
 
 // ─────────────────────────────────────────────
@@ -138,6 +139,8 @@ function CandidateCard({ candidate, onApprove, onDismiss, isProcessing }: Candid
 
 export default function CandidatesPage() {
     const { selectedRepoId, trackedRepoIds } = useAppState();
+    const { warning } = useToast();
+    const isDemoMode = process.env.NEXT_PUBLIC_DEMO_MODE === 'true';
     const [candidates, setCandidates] = useState<Candidate[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -175,6 +178,10 @@ export default function CandidatesPage() {
     }, [repoId]);
 
     const handleApprove = async (candidateId: string) => {
+        if (isDemoMode) {
+            warning('Sign in to make changes.');
+            return;
+        }
         setProcessingIds(prev => new Set(prev).add(candidateId));
 
         try {
@@ -201,6 +208,10 @@ export default function CandidatesPage() {
     };
 
     const handleDismiss = async (candidateId: string) => {
+        if (isDemoMode) {
+            warning('Sign in to make changes.');
+            return;
+        }
         setProcessingIds(prev => new Set(prev).add(candidateId));
 
         try {
@@ -307,7 +318,7 @@ export default function CandidatesPage() {
                         candidate={candidate}
                         onApprove={handleApprove}
                         onDismiss={handleDismiss}
-                        isProcessing={processingIds.has(candidate.id)}
+                        isProcessing={processingIds.has(candidate.id) || isDemoMode}
                     />
                 ))}
             </div>
