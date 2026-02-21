@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyJWT } from '@/lib/jwt'
 import { db, type User } from '@/lib/db'
 import { UnauthorizedError, handleError } from '@/lib/errors'
+import { DEMO_LOGIN, isDemoModeEnabled } from '@/lib/demoMode'
 
 export interface AuthContext {
   user: User
@@ -35,6 +36,21 @@ export function requireAuth<T extends AuthContext>(
     try {
       // Extract JWT from cookie
       const token = req.cookies.get('session')?.value
+
+      if (!token && isDemoModeEnabled) {
+        const demoUser = await db.user.findUnique({ where: { login: DEMO_LOGIN } })
+
+        if (!demoUser) {
+          throw new UnauthorizedError('Demo user not found. Run prisma db seed.')
+        }
+
+        const demoContext: AuthContext = {
+          user: demoUser,
+          userId: demoUser.id,
+        }
+
+        return await handler(req, demoContext as T)
+      }
 
       if (!token) {
         throw new UnauthorizedError('No session token provided')

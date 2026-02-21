@@ -5,6 +5,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { SESSION_COOKIE_NAME } from '@/lib/jwt';
+import { isDemoModeEnabled } from '@/lib/demoMode';
 
 // Routes that require authentication (from (app) route group - no /app prefix)
 const PROTECTED_ROUTES = ['/timeline', '/decision', '/decisions', '/exports', '/prompts', '/settings', '/setup'];
@@ -38,6 +39,11 @@ export async function proxy(request: NextRequest) {
     );
     const isSetupRoute = pathname.startsWith('/setup');
     const isAppRoute = APP_ROUTES.some(route => pathname.startsWith(route));
+
+    // Demo mode allows anonymous browsing of protected pages.
+    if (isDemoModeEnabled && !hasSession) {
+        return NextResponse.next();
+    }
 
     // If not authenticated and trying to access protected route
     if (!hasSession && isProtectedRoute) {
