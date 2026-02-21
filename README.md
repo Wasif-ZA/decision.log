@@ -15,6 +15,7 @@ Track architecture decisions so your team never loses context.
 Teams constantly lose track of why technical decisions were made. When engineers rotate off projects, critical context disappears into old Slack threads, forgotten Confluence pages, or undocumented tribal knowledge. Architecture Decision Records (ADRs) solve this, but existing approaches — markdown files in repos and wiki pages — are hard to search, lack version history, and have no structured metadata. DecisionLog provides a dedicated tool for creating, tracking, and searching ADRs with full version history and impact assessments.
 
 ## Features
+
 - Full-text fuzzy search — find past decisions in seconds
 - Version history — see how a decision evolved from proposal to acceptance
 - Stakeholder tagging — know who was involved in each decision
@@ -31,6 +32,7 @@ Teams constantly lose track of why technical decisions were made. When engineers
 ![Search results](docs/screenshots/search-results.png)
 
 ## Tech Stack
+
 - **Next.js** (App Router) — React framework with server components
 - **Supabase** — PostgreSQL database, auth, and real-time subscriptions
 - **Prisma** — Type-safe ORM and migrations
@@ -43,12 +45,11 @@ Teams constantly lose track of why technical decisions were made. When engineers
 
 1. Clone the repo
    ```bash
-   git clone https://github.com/[username]/decisionlog.git
-   cd decisionlog
+   git clone https://github.com/Wasif-ZA/decision.log.git
+   cd decision.log/code
    ```
 2. Install dependencies
    ```bash
-   cd code
    npm install
    ```
 3. Set up environment variables
@@ -71,21 +72,18 @@ Teams constantly lose track of why technical decisions were made. When engineers
 
 ```text
 code/
-├── app/          # Next.js App Router — pages, layouts, API routes
-├── components/   # Reusable UI components
-├── lib/          # Utilities, auth helpers, and shared logic
+├── app/            # Next.js App Router — pages, layouts, API routes
+├── components/     # Reusable UI components
+├── lib/            # Utilities, auth helpers, and shared logic
 ├── prisma/
-│   ├── schema.prisma # Database schema
-│   ├── seed.js       # Mock data seed script
-│   └── migrations/   # Prisma migration files
-└── docs/             # Existing in-app documentation assets
-
+│   ├── schema.prisma   # Database schema
+│   └── seed.js         # Mock data seed script
 docs/
-├── architecture.md    # System architecture and design decisions
-├── database-schema.md # Full database schema documentation
-├── api-routes.md      # API route reference
-├── setup-guide.md     # Detailed setup and deployment guide
-└── screenshots/       # App screenshots for README
+├── architecture.md     # System architecture and design decisions
+├── database-schema.md  # Full database schema documentation
+├── api-routes.md       # API route reference
+├── setup-guide.md      # Detailed setup and deployment guide
+└── screenshots/        # App screenshots for README
 ```
 
 ## Documentation
@@ -93,6 +91,7 @@ docs/
 For detailed docs on architecture, database schema, API routes, and deployment, see the [docs/](docs/) folder.
 
 ## Roadmap
+
 - Slack/Teams notifications when a decision changes status
 - Export to markdown (compatible with adr-tools)
 - Team permissions and role-based access
