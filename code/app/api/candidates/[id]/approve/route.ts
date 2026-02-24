@@ -19,12 +19,52 @@ export async function POST(
 ) {
   return requireAuth(async (request, { user }) => {
     try {
-      const demoBlock = blockDemoWrites()
+      const demoBlock = blockDemoWrites(user.login)
       if (demoBlock) return demoBlock
 
       const { id: candidateId } = await params
 
-      // Get candidate with artifact
+      // Atomically claim the candidate for extraction.
+      const claim = await db.candidate.updateMany({
+        where: {
+          id: candidateId,
+          userId: user.id,
+          status: 'pending',
+        },
+        data: {
+          status: 'extracting',
+        },
+      })
+
+      if (claim.count === 0) {
+        const existing = await db.candidate.findUnique({
+          where: { id: candidateId },
+          select: { userId: true, status: true },
+        })
+
+        if (!existing) {
+          return NextResponse.json(
+            { code: 'NOT_FOUND', message: 'Candidate not found' },
+            { status: 404 }
+          )
+        }
+
+        if (existing.userId !== user.id) {
+          return NextResponse.json(
+            { code: 'FORBIDDEN', message: 'Access denied' },
+            { status: 403 }
+          )
+        }
+
+        return NextResponse.json(
+          {
+            code: 'CONFLICT',
+            message: `Candidate is already ${existing.status}`,
+          },
+          { status: 409 }
+        )
+      }
+
       const candidate = await db.candidate.findUnique({
         where: { id: candidateId },
         include: {
@@ -64,6 +104,11 @@ export async function POST(
 
       // If no decisions extracted, return error
       if (result.decisions.length === 0) {
+        await db.candidate.update({
+          where: { id: candidateId },
+          data: { status: 'failed' },
+        })
+
         return NextResponse.json(
           {
             code: 'NO_DECISION',
@@ -90,7 +135,7 @@ export async function POST(
           tags: extracted.tags,
           significance: extracted.significance,
           extractedBy: result.model,
-          rawResponse: extracted as any,
+          rawResponse: extracted,
         },
       })
 
@@ -115,6 +160,12 @@ export async function POST(
 
       return NextResponse.json({ decision })
     } catch (error) {
+      const { id: candidateId } = await params
+      await db.candidate.updateMany({
+        where: { id: candidateId, userId: user.id, status: 'extracting' },
+        data: { status: 'failed' },
+      })
+
       const formatted = handleError(error)
       return NextResponse.json(
         {

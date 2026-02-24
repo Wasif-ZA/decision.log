@@ -133,30 +133,9 @@ export function optionalAuth<T extends Partial<AuthContext>>(
       } as T
 
       return await handler(req, context)
-    } catch (error) {
+    } catch {
       // On error, proceed without user
       return await handler(req, {} as T)
     }
-  }
-}
-
-/**
- * Verify user owns a repo
- */
-export async function requireRepoAccess(
-  userId: string,
-  repoId: string
-): Promise<void> {
-  const repo = await db.repo.findFirst({
-    where: {
-      id: repoId,
-      userId,
-    },
-  })
-
-  if (!repo) {
-    throw new UnauthorizedError(
-      'You do not have access to this repository'
-    )
   }
 }

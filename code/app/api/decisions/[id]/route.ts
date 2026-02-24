@@ -6,9 +6,21 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { requireAuth } from '@/lib/auth/requireAuth'
 import { handleError } from '@/lib/errors'
 import { db } from '@/lib/db'
+import { validateBody } from '@/lib/validation'
+
+const UpdateDecisionSchema = z.object({
+  title: z.string().min(10).max(200).optional(),
+  context: z.string().min(50).max(2000).optional(),
+  decision: z.string().min(50).max(2000).optional(),
+  reasoning: z.string().min(50).max(2000).optional(),
+  consequences: z.string().min(50).max(2000).optional(),
+  alternatives: z.string().max(2000).optional().nullable(),
+  tags: z.array(z.string().min(1).max(50)).min(1).max(5).optional(),
+}).strict()
 
 export async function GET(
   req: NextRequest,
@@ -72,7 +84,7 @@ export async function PATCH(
   return requireAuth(async (request, { user }) => {
     try {
       const { id: decisionId } = await params
-      const body = await request.json()
+      const body = await validateBody(request, UpdateDecisionSchema)
 
       // Validate decision exists and belongs to user
       const existing = await db.decision.findUnique({

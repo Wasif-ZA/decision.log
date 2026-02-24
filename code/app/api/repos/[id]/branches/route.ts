@@ -2,10 +2,11 @@
 // List Branches for Repository
 // ===========================================
 //
-// The [id] parameter should be the GitHub numeric repository ID
+// The [id] parameter is the internal repository ID (CUID)
 
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/auth/requireAuth';
+import { requireRepoAccess } from '@/lib/auth/requireRepoAccess';
 import { decrypt } from '@/lib/crypto';
 import { GitHubError, handleError } from '@/lib/errors';
 
@@ -22,6 +23,7 @@ export async function GET(
     return requireAuth(async (req, { user }) => {
         try {
             const { id: repoId } = await params;
+            const repo = await requireRepoAccess(user.id, repoId);
 
             // Decrypt GitHub token
             if (!user.githubTokenEncrypted || !user.githubTokenIv) {
@@ -36,25 +38,9 @@ export async function GET(
                 user.githubTokenIv
             );
 
-            // Fetch repo details from GitHub using numeric ID
-            const repoResponse = await fetch(`https://api.github.com/repositories/${repoId}`, {
-                headers: {
-                    Authorization: `Bearer ${githubToken}`,
-                    Accept: 'application/vnd.github.v3+json',
-                },
-            });
-
-            if (!repoResponse.ok) {
-                throw new GitHubError('Failed to fetch repository details', repoResponse.status);
-            }
-
-            const repoData = await repoResponse.json();
-            const owner = repoData.owner.login;
-            const repoName = repoData.name;
-
             // Fetch branches from GitHub
             const branchesResponse = await fetch(
-                `https://api.github.com/repos/${owner}/${repoName}/branches?per_page=100`,
+                `https://api.github.com/repos/${repo.owner}/${repo.name}/branches?per_page=100`,
                 {
                     headers: {
                         Authorization: `Bearer ${githubToken}`,
@@ -71,7 +57,7 @@ export async function GET(
             const branches = branchesData.map((branch) => branch.name);
 
             return NextResponse.json({
-                repoId,
+                repoId: repo.id,
                 branches,
             });
         } catch (error) {

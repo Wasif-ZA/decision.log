@@ -227,6 +227,7 @@ model ExtractionCost {
   // Timestamps
   extractedAt DateTime @default(now())
 
+  @@index([userId])
   @@index([userId, repoId, extractedAt])
   @@index([repoId, extractedAt])
   @@map("extraction_costs")

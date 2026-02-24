@@ -7,6 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/auth/requireAuth'
+import { requireRepoAccess } from '@/lib/auth/requireRepoAccess'
 import { handleError } from '@/lib/errors'
 import { db } from '@/lib/db'
 
@@ -17,12 +18,12 @@ export async function POST(
   return requireAuth(async (request, { user }) => {
     try {
       const { id: repoId } = await params
+      await requireRepoAccess(user.id, repoId)
 
       // Update repo
       const repo = await db.repo.update({
         where: {
           id: repoId,
-          userId: user.id,
         },
         data: {
           enabled: false,

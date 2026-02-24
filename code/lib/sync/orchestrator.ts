@@ -35,17 +35,40 @@ export async function syncRepository(
   let sievedCount = 0
   let candidatesCreated = 0
   let newCursor: string | null = null
+  let syncOpId: string | null = null
 
-  // Start sync operation
-  const syncOp = await db.syncOperation.create({
-    data: {
-      repoId,
+  // Acquire a lightweight sync lock on the repo
+  const lock = await db.repo.updateMany({
+    where: {
+      id: repoId,
       userId,
-      status: 'syncing',
+      syncStatus: 'idle',
     },
+    data: { syncStatus: 'syncing' },
   })
 
+  if (lock.count === 0) {
+    return {
+      success: false,
+      fetchedCount: 0,
+      sievedCount: 0,
+      candidatesCreated: 0,
+      errors: ['Sync already in progress'],
+      newCursor: null,
+    }
+  }
+
   try {
+    // Start sync operation
+    const syncOp = await db.syncOperation.create({
+      data: {
+        repoId,
+        userId,
+        status: 'syncing',
+      },
+    })
+    syncOpId = syncOp.id
+
     // 1. Get repo and user
     const repo = await db.repo.findUnique({
       where: { id: repoId },
@@ -120,17 +143,15 @@ export async function syncRepository(
       }
     }
 
-    // 5. Update repo cursor
-    if (newCursor) {
-      await db.repo.update({
-        where: { id: repoId },
-        data: {
-          cursor: newCursor,
-          lastSyncAt: new Date(),
-          syncStatus: 'idle',
-        },
-      })
-    }
+    // 5. Update repo cursor and release lock
+    await db.repo.update({
+      where: { id: repoId },
+      data: {
+        ...(newCursor ? { cursor: newCursor } : {}),
+        lastSyncAt: new Date(),
+        syncStatus: 'idle',
+      },
+    })
 
     // 6. Complete sync operation
     await db.syncOperation.update({
@@ -159,13 +180,25 @@ export async function syncRepository(
     logError(error, 'Sync failed')
 
     // Update sync operation with error
-    await db.syncOperation.update({
-      where: { id: syncOp.id },
+    if (syncOpId) {
+      await db.syncOperation.update({
+        where: { id: syncOpId },
+        data: {
+          status: 'error',
+          completedAt: new Date(),
+          errorCount: errors.length + 1,
+          errorMessage: error instanceof Error ? error.message : 'Unknown error',
+        },
+      })
+    }
+
+    await db.repo.updateMany({
+      where: {
+        id: repoId,
+        userId,
+      },
       data: {
-        status: 'error',
-        completedAt: new Date(),
-        errorCount: errors.length + 1,
-        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+        syncStatus: 'idle',
       },
     })
 

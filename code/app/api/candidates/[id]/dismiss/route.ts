@@ -17,7 +17,7 @@ export async function POST(
 ) {
   return requireAuth(async (request, { user }) => {
     try {
-      const demoBlock = blockDemoWrites()
+      const demoBlock = blockDemoWrites(user.login)
       if (demoBlock) return demoBlock
 
       const { id: candidateId } = await params

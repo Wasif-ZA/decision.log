@@ -4,10 +4,10 @@
 // Step 1: Pick Repository
 // ===========================================
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { GitBranch, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
-import { LoadingSkeleton, ListItemSkeleton } from '@/components/ui/LoadingSkeleton';
+import { ListItemSkeleton } from '@/components/ui/LoadingSkeleton';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { logEvent } from '@/lib/debugLog';
 import type { WizardStepStatus, Repo } from '@/types/app';
@@ -28,8 +28,9 @@ export function PickRepoStep({
     setStepStatus,
 }: PickRepoStepProps) {
     const [repos, setRepos] = useState<Repo[]>([]);
+    const [isEnabling, setIsEnabling] = useState(false);
 
-    const fetchRepos = async () => {
+    const fetchRepos = useCallback(async () => {
         setStepStatus('loading');
         logEvent('fetch_repos_start');
 
@@ -48,19 +49,53 @@ export function PickRepoStep({
             setStepStatus('error', String(error));
             logEvent('fetch_repos_error', { error: String(error) });
         }
-    };
+    }, [setStepStatus]);
 
     useEffect(() => {
         fetchRepos();
-    }, []);
+    }, [fetchRepos]);
 
     const handleSelect = (repo: Repo) => {
         onSelect(repo.id, repo.fullName);
     };
 
     const handleNext = () => {
-        if (selectedRepoId) {
+        if (!selectedRepoId) {
+            return;
+        }
+
+        const selectedRepo = repos.find((repo) => repo.id === selectedRepoId);
+        if (!selectedRepo) {
+            setStepStatus('error', 'Selected repository not found');
+            return;
+        }
+
+        void enableAndContinue(selectedRepo);
+    };
+
+    const enableAndContinue = async (repo: Repo) => {
+        setIsEnabling(true);
+        setStepStatus('loading');
+
+        try {
+            const response = await fetch(`/api/repos/${repo.id}/enable`, {
+                method: 'POST',
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.message || 'Failed to enable repository');
+            }
+
+            const data = await response.json();
+            onSelect(data.repo.id, data.repo.fullName || repo.fullName);
+            setStepStatus('success');
             onNext();
+        } catch (error) {
+            setStepStatus('error', String(error));
+            logEvent('enable_repo_error', { error: String(error), repoId: repo.id });
+        } finally {
+            setIsEnabling(false);
         }
     };
 
@@ -148,7 +183,11 @@ export function PickRepoStep({
                     <RefreshCw className="w-4 h-4" />
                     Refresh
                 </Button>
-                <Button onClick={handleNext} disabled={!selectedRepoId}>
+                <Button
+                    onClick={handleNext}
+                    disabled={!selectedRepoId || isEnabling}
+                    isLoading={isEnabling}
+                >
                     Next
                 </Button>
             </div>

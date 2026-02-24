@@ -313,17 +313,17 @@ function generateReasoning(
 export async function sieveArtifacts(
   repoId: string,
   userId: string,
-  threshold: number = 0.4
+  _threshold: number = 0.4
 ): Promise<{
   processedCount: number
   candidatesCreated: number
   avgScore: number
 }> {
-  // This will be implemented when we integrate with the database
-  // For now, just return a stub
-  return {
-    processedCount: 0,
-    candidatesCreated: 0,
-    avgScore: 0,
-  }
+  void repoId
+  void userId
+  void _threshold
+
+  throw new Error(
+    'sieveArtifacts is not implemented. Use syncRepository in lib/sync/orchestrator.ts instead.'
+  )
 }

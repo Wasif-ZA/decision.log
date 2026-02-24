@@ -7,6 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/auth/requireAuth'
+import { requireRepoAccess } from '@/lib/auth/requireRepoAccess'
 import { handleError } from '@/lib/errors'
 import { db } from '@/lib/db'
 
@@ -17,6 +18,8 @@ export async function GET(
   return requireAuth(async (request, { user }) => {
     try {
       const { id: repoId } = await params
+      await requireRepoAccess(user.id, repoId)
+
       const { searchParams } = new URL(request.url)
       const format = searchParams.get('format') ?? 'json'
 
@@ -86,7 +89,7 @@ export async function GET(
           where: { id: repoId },
           select: { fullName: true },
         }),
-        decisions: decisions.map((d: any) => ({
+        decisions: decisions.map((d) => ({
           id: d.id,
           title: d.title,
           context: d.context,

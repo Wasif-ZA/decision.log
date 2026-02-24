@@ -60,12 +60,24 @@ export async function GET() {
         );
     }
 
-    // In production, you might fetch fresh user data from DB here
+    const user = await db.user.findUnique({
+        where: { id: payload.sub },
+        select: { login: true, avatarUrl: true },
+    });
+
+    if (!user) {
+        cookieStore.delete(SESSION_COOKIE_NAME);
+        return NextResponse.json(
+            { code: 'UNAUTHORIZED', message: 'User not found' },
+            { status: 401 }
+        );
+    }
+
     const response: AuthMeResponse = {
         user: {
             id: payload.sub,
-            login: payload.login,
-            avatarUrl: `https://avatars.githubusercontent.com/u/${payload.sub}`,
+            login: user.login || payload.login,
+            avatarUrl: user.avatarUrl || '',
         },
         setupComplete: payload.setupComplete,
         trackedRepoIds: payload.trackedRepoIds,

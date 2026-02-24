@@ -4,14 +4,11 @@
 
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { SESSION_COOKIE_NAME } from '@/lib/jwt';
+import { SESSION_COOKIE_NAME, verifyJWT } from '@/lib/jwt';
 import { isDemoModeEnabled } from '@/lib/demoMode';
 
 // Routes that require authentication (from (app) route group - no /app prefix)
 const PROTECTED_ROUTES = ['/timeline', '/decision', '/decisions', '/exports', '/prompts', '/settings', '/setup'];
-
-// Routes that are public
-const PUBLIC_ROUTES = ['/', '/login', '/api/auth'];
 
 // App routes that require setup to be complete
 const APP_ROUTES = ['/timeline', '/decision', '/decisions', '/exports', '/prompts', '/settings'];
@@ -34,9 +31,6 @@ export async function proxy(request: NextRequest) {
 
     // Check if the route is protected
     const isProtectedRoute = PROTECTED_ROUTES.some(route => pathname.startsWith(route));
-    const isPublicRoute = PUBLIC_ROUTES.some(route =>
-        pathname === route || pathname.startsWith(route)
-    );
     const isSetupRoute = pathname.startsWith('/setup');
     const isAppRoute = APP_ROUTES.some(route => pathname.startsWith(route));
 
@@ -55,9 +49,7 @@ export async function proxy(request: NextRequest) {
     // If authenticated, decode JWT to check setupComplete
     if (hasSession && sessionCookie?.value) {
         try {
-            // For MVP, we do a simple JWT decode without full verification in middleware
-            // (Full verification happens in API routes)
-            const payload = decodeJWTPayload(sessionCookie.value);
+            const payload = await verifyJWT(sessionCookie.value);
 
             if (payload) {
                 const setupComplete = payload.setupComplete === true;
@@ -87,23 +79,6 @@ export async function proxy(request: NextRequest) {
     }
 
     return NextResponse.next();
-}
-
-/**
- * Simple JWT payload decoder (no signature verification)
- * Used in middleware for quick checks - full verification happens in API routes
- */
-function decodeJWTPayload(token: string): Record<string, unknown> | null {
-    try {
-        const parts = token.split('.');
-        if (parts.length !== 3) return null;
-
-        const payload = parts[1];
-        const decoded = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
-        return JSON.parse(decoded);
-    } catch {
-        return null;
-    }
 }
 
 // Configure which routes the middleware runs on

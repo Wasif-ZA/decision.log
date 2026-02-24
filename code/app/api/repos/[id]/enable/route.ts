@@ -4,11 +4,12 @@
  * POST /api/repos/[id]/enable
  * Enable tracking for a repository
  *
- * The [id] parameter should be the GitHub numeric repository ID
+ * The [id] parameter may be a GitHub numeric repository ID or an internal repo ID
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/auth/requireAuth'
+import { requireRepoAccess } from '@/lib/auth/requireRepoAccess'
 import { decrypt } from '@/lib/crypto'
 import { GitHubError, handleError } from '@/lib/errors'
 import { db } from '@/lib/db'
@@ -19,7 +20,27 @@ export async function POST(
 ) {
   return requireAuth(async (request, { user }) => {
     try {
-      const { id: repoId } = await params
+      const { id: repoIdentifier } = await params
+
+      // Already-tracked repo path
+      if (!/^\d+$/.test(repoIdentifier)) {
+        const existingRepo = await requireRepoAccess(user.id, repoIdentifier)
+        const enabledRepo = await db.repo.update({
+          where: { id: existingRepo.id },
+          data: { enabled: true },
+        })
+
+        return NextResponse.json({
+          success: true,
+          repo: {
+            id: enabledRepo.id,
+            fullName: enabledRepo.fullName,
+            enabled: enabledRepo.enabled,
+          },
+        })
+      }
+
+      const repoId = repoIdentifier
 
       // Decrypt GitHub token
       if (!user.githubTokenEncrypted || !user.githubTokenIv) {
@@ -50,6 +71,18 @@ export async function POST(
       const owner = githubRepo.owner.login
       const repoName = githubRepo.name
       const fullName = githubRepo.full_name
+
+      const existingRepo = await db.repo.findUnique({
+        where: { fullName },
+        select: { userId: true },
+      })
+
+      if (existingRepo && existingRepo.userId !== user.id) {
+        return NextResponse.json(
+          { code: 'FORBIDDEN', message: 'Repository is already tracked by another account' },
+          { status: 403 }
+        )
+      }
 
       // Create or update repo in database
       const repo = await db.repo.upsert({

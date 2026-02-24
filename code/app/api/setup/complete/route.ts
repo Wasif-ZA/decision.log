@@ -2,60 +2,75 @@
 // Complete Setup
 // ===========================================
 
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { cookies } from 'next/headers';
-import { verifyJWT, signJWT, getSessionCookieOptions, SESSION_COOKIE_NAME } from '@/lib/jwt';
+import { requireAuth } from '@/lib/auth/requireAuth';
+import { requireRepoAccessByIdentifier } from '@/lib/auth/requireRepoAccess';
+import { db } from '@/lib/db';
+import { handleError } from '@/lib/errors';
+import { validateBody } from '@/lib/validation';
+import { signJWT, getSessionCookieOptions, SESSION_COOKIE_NAME } from '@/lib/jwt';
 
 export const dynamic = 'force-dynamic';
 
-export async function POST(request: Request) {
-    const cookieStore = await cookies();
-    const token = cookieStore.get(SESSION_COOKIE_NAME)?.value;
+const CompleteSetupSchema = z.object({
+    repoId: z.string().min(1),
+    branchName: z.string().min(1).optional(),
+});
 
-    if (!token) {
+export const POST = requireAuth(async (request: NextRequest, { user }) => {
+    try {
+        const cookieStore = await cookies();
+        const { repoId, branchName } = await validateBody(request, CompleteSetupSchema);
+        const repo = await requireRepoAccessByIdentifier(user.id, repoId);
+
+        const updatedRepo = await db.repo.update({
+            where: { id: repo.id },
+            data: {
+                enabled: true,
+                ...(branchName ? { defaultBranch: branchName } : {}),
+            },
+            select: { id: true },
+        });
+
+        const enabledRepos = await db.repo.findMany({
+            where: {
+                userId: user.id,
+                enabled: true,
+            },
+            select: { id: true },
+        });
+
+        const trackedRepoIds = [
+            ...new Set([...enabledRepos.map((r) => r.id), updatedRepo.id]),
+        ];
+
+        const newToken = await signJWT({
+            sub: user.id,
+            login: user.login,
+            setupComplete: true,
+            trackedRepoIds,
+        });
+
+        const isProduction = process.env.NODE_ENV === 'production';
+        const cookieOptions = getSessionCookieOptions(isProduction);
+        cookieStore.set(SESSION_COOKIE_NAME, newToken, cookieOptions);
+
+        return NextResponse.json({
+            success: true,
+            setupComplete: true,
+            trackedRepoIds,
+        });
+    } catch (error) {
+        const formatted = handleError(error);
         return NextResponse.json(
-            { code: 'UNAUTHORIZED', message: 'Not authenticated' },
-            { status: 401 }
+            {
+                code: formatted.code,
+                message: formatted.message,
+                details: formatted.details,
+            },
+            { status: formatted.statusCode }
         );
     }
-
-    const payload = await verifyJWT(token);
-
-    if (!payload) {
-        return NextResponse.json(
-            { code: 'UNAUTHORIZED', message: 'Invalid session' },
-            { status: 401 }
-        );
-    }
-
-    const body = await request.json();
-    const { repoId, branchName } = body;
-
-    if (!repoId) {
-        return NextResponse.json(
-            { code: 'VALIDATION_ERROR', message: 'repoId is required' },
-            { status: 400 }
-        );
-    }
-
-    // Update JWT with setupComplete = true and add tracked repo
-    const newPayload = {
-        sub: payload.sub,
-        login: payload.login,
-        setupComplete: true,
-        trackedRepoIds: [...new Set([...payload.trackedRepoIds, repoId])],
-    };
-
-    const newToken = await signJWT(newPayload);
-
-    // Set updated cookie
-    const isProduction = process.env.NODE_ENV === 'production';
-    const cookieOptions = getSessionCookieOptions(isProduction);
-    cookieStore.set(SESSION_COOKIE_NAME, newToken, cookieOptions);
-
-    return NextResponse.json({
-        success: true,
-        setupComplete: true,
-        trackedRepoIds: newPayload.trackedRepoIds,
-    });
-}
+});

@@ -10,16 +10,18 @@ import type { Repo } from '@/types/app';
 
 export const dynamic = 'force-dynamic';
 
+interface GitHubRepo {
+    id: number;
+    name: string;
+    full_name: string;
+    default_branch?: string;
+    private: boolean;
+}
+
 export const GET = requireAuth(async (req, { user }) => {
     try {
-        // Debug: log user object keys
-        console.log('[/api/repos] user keys:', Object.keys(user));
-        console.log('[/api/repos] user.githubTokenEncrypted:', user.githubTokenEncrypted?.substring(0, 10));
-        console.log('[/api/repos] user.githubTokenIv:', user.githubTokenIv);
-
         // Decrypt GitHub token
         if (!user.githubTokenEncrypted || !user.githubTokenIv) {
-            console.log('[/api/repos] MISSING TOKEN - returning 401');
             return NextResponse.json(
                 { code: 'UNAUTHORIZED', message: 'GitHub token not found' },
                 { status: 401 }
@@ -52,10 +54,10 @@ export const GET = requireAuth(async (req, { user }) => {
             );
         }
 
-        const githubRepos = await response.json();
+        const githubRepos = (await response.json()) as GitHubRepo[];
 
         // Transform to our Repo format
-        const repos: Repo[] = githubRepos.map((repo: any) => ({
+        const repos: Repo[] = githubRepos.map((repo) => ({
             id: String(repo.id),
             name: repo.name,
             fullName: repo.full_name,

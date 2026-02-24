@@ -34,6 +34,8 @@ export interface SuggestionResult {
   totalCost: number
 }
 
+const LLM_REQUEST_TIMEOUT_MS = 60_000
+
 /**
  * Suggest consequences using LLM
  */
@@ -51,13 +53,19 @@ export async function suggestConsequences(
 
   const client = new Anthropic({ apiKey })
   const userPrompt = createSuggestionPrompt(title, context, decision, reasoning)
+  const { signal, clear } = createTimeoutController(LLM_REQUEST_TIMEOUT_MS)
 
-  const response = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 1024,
-    system: SUGGESTION_SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: userPrompt }],
-  })
+  const response = await client.messages
+    .create(
+      {
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1024,
+        system: SUGGESTION_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: userPrompt }],
+      },
+      { signal }
+    )
+    .finally(clear)
 
   const textContent = response.content.find((c) => c.type === 'text')
   if (!textContent || textContent.type !== 'text') {
@@ -99,18 +107,24 @@ async function extractWithClaude(
   const client = new Anthropic({ apiKey })
 
   const userPrompt = createExtractionPrompt(artifacts)
+  const { signal, clear } = createTimeoutController(LLM_REQUEST_TIMEOUT_MS)
 
-  const response = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 4096,
-    system: EXTRACTION_SYSTEM_PROMPT,
-    messages: [
+  const response = await client.messages
+    .create(
       {
-        role: 'user',
-        content: userPrompt,
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 4096,
+        system: EXTRACTION_SYSTEM_PROMPT,
+        messages: [
+          {
+            role: 'user',
+            content: userPrompt,
+          },
+        ],
       },
-    ],
-  })
+      { signal }
+    )
+    .finally(clear)
 
   // Parse response
   const textContent = response.content.find((c) => c.type === 'text')
@@ -172,16 +186,22 @@ async function extractWithGPT4o(
   const client = new OpenAI({ apiKey })
 
   const userPrompt = createExtractionPrompt(artifacts)
+  const { signal, clear } = createTimeoutController(LLM_REQUEST_TIMEOUT_MS)
 
-  const response = await client.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [
-      { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
-      { role: 'user', content: userPrompt },
-    ],
-    response_format: { type: 'json_object' },
-    max_tokens: 4096,
-  })
+  const response = await client.chat.completions
+    .create(
+      {
+        model: 'gpt-4o',
+        messages: [
+          { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
+          { role: 'user', content: userPrompt },
+        ],
+        response_format: { type: 'json_object' },
+        max_tokens: 4096,
+      },
+      { signal }
+    )
+    .finally(clear)
 
   // Parse response
   const content = response.choices[0]?.message?.content
@@ -251,5 +271,17 @@ export async function extractDecisions(
         { claudeError: error, gpt4oError: fallbackError }
       )
     }
+  }
+}
+
+function createTimeoutController(timeoutMs: number): {
+  signal: AbortSignal
+  clear: () => void
+} {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  return {
+    signal: controller.signal,
+    clear: () => clearTimeout(timeout),
   }
 }

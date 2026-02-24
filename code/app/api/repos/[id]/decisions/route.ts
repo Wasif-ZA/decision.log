@@ -6,9 +6,13 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import type { Prisma } from '@prisma/client'
 import { requireAuth } from '@/lib/auth/requireAuth'
+import { requireRepoAccess } from '@/lib/auth/requireRepoAccess'
 import { handleError } from '@/lib/errors'
 import { db } from '@/lib/db'
+
+const ALLOWED_SORT_FIELDS = new Set(['createdAt', 'title', 'significance'])
 
 export async function GET(
   req: NextRequest,
@@ -17,16 +21,21 @@ export async function GET(
   return requireAuth(async (request, { user }) => {
     try {
       const { id: repoId } = await params
+      await requireRepoAccess(user.id, repoId)
+
       const { searchParams } = new URL(request.url)
 
       // Optional filters
       const tag = searchParams.get('tag')
       const search = searchParams.get('search')
-      const sortBy = searchParams.get('sortBy') || 'createdAt'
-      const sortOrder = searchParams.get('sortOrder') || 'desc'
+      const sortByParam = searchParams.get('sortBy') ?? 'createdAt'
+      const sortBy = ALLOWED_SORT_FIELDS.has(sortByParam)
+        ? (sortByParam as 'createdAt' | 'title' | 'significance')
+        : 'createdAt'
+      const sortOrder = searchParams.get('sortOrder') === 'asc' ? 'asc' : 'desc'
 
       // Build where clause
-      const where: any = {
+      const where: Prisma.DecisionWhereInput = {
         repoId,
         userId: user.id,
       }
@@ -59,11 +68,7 @@ export async function GET(
       })
 
       // Get all unique tags for filtering
-      const allDecisions = await db.decision.findMany({
-        where: { repoId, userId: user.id },
-        select: { tags: true },
-      })
-      const allTags = [...new Set(allDecisions.flatMap((d: { tags: string[] }) => d.tags))].sort()
+      const allTags = [...new Set(decisions.flatMap((d) => d.tags))].sort()
 
       return NextResponse.json({
         decisions,

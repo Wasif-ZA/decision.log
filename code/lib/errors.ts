@@ -133,12 +133,14 @@ export function handleError(error: unknown): {
   details?: unknown
   statusCode: number
 } {
+  const isProduction = process.env.NODE_ENV === 'production'
+
   // AppError instances
   if (error instanceof AppError) {
     return {
       code: error.code,
       message: error.message,
-      details: error.details,
+      details: isProduction ? undefined : error.details,
       statusCode: error.statusCode,
     }
   }
@@ -151,7 +153,7 @@ export function handleError(error: unknown): {
       return {
         code: 'UNIQUE_CONSTRAINT_VIOLATION',
         message: 'A record with this value already exists',
-        details: prismaError.meta,
+        details: isProduction ? undefined : prismaError.meta,
         statusCode: 409,
       }
     }
@@ -160,7 +162,7 @@ export function handleError(error: unknown): {
       return {
         code: 'NOT_FOUND',
         message: 'Record not found',
-        details: prismaError.meta,
+        details: isProduction ? undefined : prismaError.meta,
         statusCode: 404,
       }
     }
@@ -168,7 +170,7 @@ export function handleError(error: unknown): {
     return {
       code: 'DATABASE_ERROR',
       message: 'Database operation failed',
-      details: prismaError,
+      details: isProduction ? undefined : prismaError,
       statusCode: 500,
     }
   }
@@ -177,7 +179,7 @@ export function handleError(error: unknown): {
   if (error instanceof Error) {
     return {
       code: ERROR_CODES.SERVER_ERROR,
-      message: error.message,
+      message: isProduction ? 'An internal error occurred' : error.message,
       statusCode: 500,
     }
   }
