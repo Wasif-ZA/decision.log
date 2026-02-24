@@ -2,103 +2,106 @@
  * Integration Tests: Authentication API
  *
  * Tests for authentication endpoints:
- * - /api/auth/github - OAuth initiation
- * - /api/auth/callback - OAuth callback
  * - /api/auth/me - Get current user
  * - /api/auth/logout - Sign out
- *
- * NOTE: These tests require database setup with Prisma.
- * Mark as .skip until database is implemented.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { generateTestToken } from '../../utils/helpers'
 import { FIXTURES } from '../../fixtures'
+import { GET as getMe } from '@/app/api/auth/me/route'
+import { POST as logout } from '@/app/api/auth/logout/route'
+import { SESSION_COOKIE_NAME } from '@/lib/jwt'
 
-describe.skip('Authentication API', () => {
+// Mock next/headers
+vi.mock('next/headers', () => ({
+  cookies: vi.fn(),
+}))
+
+describe('Authentication API', () => {
   beforeEach(async () => {
-    // TODO: Setup test database
-    // await prisma.$executeRaw`TRUNCATE TABLE "User" CASCADE`
-  })
-
-  describe('POST /api/auth/callback', () => {
-    it('should create user on first OAuth callback', async () => {
-      // TODO: Implement when OAuth is connected
-      // Mock GitHub OAuth response
-      // Call callback endpoint
-      // Assert user created in database
-      // Assert session token set
-      expect(true).toBe(true)
-    })
-
-    it('should return existing user on subsequent callbacks', async () => {
-      // TODO: Test idempotency
-      expect(true).toBe(true)
-    })
-
-    it('should reject invalid OAuth state', async () => {
-      // TODO: Test CSRF protection
-      expect(true).toBe(true)
-    })
+    vi.resetAllMocks()
   })
 
   describe('GET /api/auth/me', () => {
     it('should return current user with valid session', async () => {
       // Arrange
-      const user = FIXTURES.users.testUserA
-      const token = await generateTestToken(user.id)
+      const { cookies } = await import('next/headers')
+      const fixtureUser = FIXTURES.users.testUserA
+      
+      const token = await generateTestToken(fixtureUser.id, fixtureUser.login)
+      
+      // Mock cookie store
+      ;(cookies as any).mockResolvedValue({
+        get: (name: string) => name === SESSION_COOKIE_NAME ? { value: token } : undefined,
+      })
 
-      // TODO: Make request with token cookie
-      // const response = await fetch('/api/auth/me', {
-      //   headers: {
-      //     Cookie: `decision_log_session=${token}`
-      //   }
-      // })
+      // Act
+      const response = await getMe()
+      const data = await response.json()
 
       // Assert
-      // expect(response.status).toBe(200)
-      // expect(response.body.data).toMatchObject({
-      //   id: user.id,
-      //   login: user.login,
-      // })
-      expect(true).toBe(true)
+      expect(response.status).toBe(200)
+      expect(data.user).toMatchObject({
+        id: fixtureUser.id,
+        login: fixtureUser.login,
+      })
     })
 
     it('should return 401 with invalid session', async () => {
-      // TODO: Test with expired/invalid token
-      expect(true).toBe(true)
+      // Arrange
+      const { cookies } = await import('next/headers')
+      ;(cookies as any).mockResolvedValue({
+        get: () => undefined,
+      })
+
+      // Act
+      const response = await getMe()
+      const data = await response.json()
+
+      // Assert
+      expect(response.status).toBe(401)
+      expect(data.code).toBe('UNAUTHORIZED')
     })
 
     it('should not expose sensitive data', async () => {
-      // TODO: Assert GitHub token not in response
-      expect(true).toBe(true)
+      // Arrange
+      const { cookies } = await import('next/headers')
+      const fixtureUser = FIXTURES.users.testUserA
+      
+      const token = await generateTestToken(fixtureUser.id, fixtureUser.login)
+      ;(cookies as any).mockResolvedValue({
+        get: (name: string) => name === SESSION_COOKIE_NAME ? { value: token } : undefined,
+      })
+
+      // Act
+      const response = await getMe()
+      const data = await response.json()
+
+      // Assert
+      // Sensitive fields like tokens should not be in the response
+      expect(data.user).not.toHaveProperty('githubTokenEncrypted')
+      expect(data.user).not.toHaveProperty('githubTokenIv')
     })
   })
 
   describe('POST /api/auth/logout', () => {
     it('should clear session cookie', async () => {
-      // TODO: Test cookie removal
-      expect(true).toBe(true)
-    })
+      // Arrange
+      const { cookies } = await import('next/headers')
+      const deleteMock = vi.fn()
+      ;(cookies as any).mockResolvedValue({
+        delete: deleteMock,
+      })
 
-    it('should invalidate session token', async () => {
-      // TODO: Test token invalidation
-      expect(true).toBe(true)
-    })
-  })
+      // Act
+      const response = await logout()
+      const data = await response.json()
 
-  describe('Security', () => {
-    it('should store GitHub token encrypted', async () => {
-      // TODO: Test AUTH-03 from test plan
-      // Create integration with token
-      // Query DB directly
-      // Assert token is encrypted, not plaintext
-      expect(true).toBe(true)
-    })
-
-    it('should validate CSRF token on OAuth callback', async () => {
-      // TODO: Test AUTH-10 from test plan
-      expect(true).toBe(true)
+      // Assert
+      expect(response.status).toBe(200)
+      expect(data.success).toBe(true)
+      expect(deleteMock).toHaveBeenCalledWith(SESSION_COOKIE_NAME)
     })
   })
 })

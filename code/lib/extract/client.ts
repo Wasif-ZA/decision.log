@@ -10,7 +10,9 @@ import { ExtractionError } from '@/lib/errors'
 import {
   DecisionExtractionSchema,
   EXTRACTION_SYSTEM_PROMPT,
+  SUGGESTION_SYSTEM_PROMPT,
   createExtractionPrompt,
+  createSuggestionPrompt,
   calculateCost,
   estimateTokens,
   type DecisionExtraction,
@@ -22,6 +24,57 @@ export interface ExtractionResult {
   inputTokens: number
   outputTokens: number
   totalCost: number
+}
+
+export interface SuggestionResult {
+  suggestions: string
+  model: 'claude-sonnet-4' | 'gpt-4o'
+  inputTokens: number
+  outputTokens: number
+  totalCost: number
+}
+
+/**
+ * Suggest consequences using LLM
+ */
+export async function suggestConsequences(
+  title: string,
+  context: string,
+  decision: string,
+  reasoning: string
+): Promise<SuggestionResult> {
+  const apiKey = process.env.ANTHROPIC_API_KEY
+
+  if (!apiKey) {
+    throw new ExtractionError('ANTHROPIC_API_KEY not configured')
+  }
+
+  const client = new Anthropic({ apiKey })
+  const userPrompt = createSuggestionPrompt(title, context, decision, reasoning)
+
+  const response = await client.messages.create({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 1024,
+    system: SUGGESTION_SYSTEM_PROMPT,
+    messages: [{ role: 'user', content: userPrompt }],
+  })
+
+  const textContent = response.content.find((c) => c.type === 'text')
+  if (!textContent || textContent.type !== 'text') {
+    throw new ExtractionError('No text content in Claude response')
+  }
+
+  const inputTokens = response.usage.input_tokens
+  const outputTokens = response.usage.output_tokens
+  const totalCost = calculateCost('claude-sonnet-4', inputTokens, outputTokens)
+
+  return {
+    suggestions: textContent.text,
+    model: 'claude-sonnet-4',
+    inputTokens,
+    outputTokens,
+    totalCost,
+  }
 }
 
 /**

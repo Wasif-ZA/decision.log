@@ -62,7 +62,7 @@ export function NoDataEmptyState({ onAction }: { onAction?: () => void }) {
     return (
         <EmptyState
             title="No data yet"
-            description="There's nothing to show here yet. Start by connecting a repository."
+            description="There's nothing to show here yet."
             action={onAction ? { label: 'Get Started', onClick: onAction } : undefined}
         />
     );

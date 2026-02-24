@@ -134,7 +134,7 @@ export async function GET(request: Request) {
         cookieStore.set(SESSION_COOKIE_NAME, jwt, cookieOptions);
 
         // Redirect based on setup status
-        const redirectTo = isNewUser ? '/setup' : '/app/timeline';
+        const redirectTo = isNewUser ? '/setup' : '/timeline';
         return NextResponse.redirect(new URL(redirectTo, request.url));
 
     } catch (error) {

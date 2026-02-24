@@ -39,26 +39,38 @@ export async function GET(
       })
 
       if (format === 'markdown') {
-        // Generate markdown
-        let markdown = '# Architectural Decision Records\n\n'
+        // Generate markdown in ADR format
+        let markdown = '# Architecture Decision Records\n\n'
+        markdown += `Repository: ${repoId}\n`
+        markdown += `Exported: ${new Date().toLocaleDateString()}\n\n`
+        markdown += '---\n\n'
 
-        for (const decision of decisions) {
-          markdown += `## ${decision.title}\n\n`
-          markdown += `**Date:** ${decision.createdAt.toISOString().split('T')[0]}\n`
-          markdown += `**Tags:** ${decision.tags.join(', ')}\n`
-          markdown += `**Significance:** ${decision.significance.toFixed(2)}\n`
-          markdown += `**Source:** [${decision.candidate.artifact.title}](${decision.candidate.artifact.url})\n\n`
-          markdown += `### Context\n\n${decision.context}\n\n`
-          markdown += `### Decision\n\n${decision.decision}\n\n`
-          markdown += `### Reasoning\n\n${decision.reasoning}\n\n`
-          markdown += `### Consequences\n\n${decision.consequences}\n\n`
+        decisions.forEach((decision, index) => {
+          const adrNumber = decisions.length - index
+          markdown += `# ${adrNumber}. ${decision.title}\n\n`
+          markdown += `**Date:** ${decision.createdAt.toISOString().split('T')[0]}\n\n`
+          
+          markdown += `## Status\n\nAccepted\n\n`
+          
+          markdown += `## Context\n\n${decision.context}\n\n`
+          
+          markdown += `## Decision\n\n${decision.decision}\n\n`
+          
+          markdown += `## Reasoning\n\n${decision.reasoning}\n\n`
+          
+          markdown += `## Consequences\n\n${decision.consequences}\n\n`
 
           if (decision.alternatives) {
-            markdown += `### Alternatives Considered\n\n${decision.alternatives}\n\n`
+            markdown += `## Alternatives Considered\n\n${decision.alternatives}\n\n`
           }
 
+          markdown += `**Tags:** ${decision.tags.map(t => `\`${t}\``).join(', ')}\n\n`
+          markdown += `**Metadata:**\n`
+          markdown += `- Significance: ${decision.significance.toFixed(2)}\n`
+          markdown += `- Source: [${decision.candidate.artifact.title}](${decision.candidate.artifact.url})\n\n`
+
           markdown += '---\n\n'
-        }
+        })
 
         return new Response(markdown, {
           headers: {

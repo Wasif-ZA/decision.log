@@ -155,6 +155,38 @@ Return a JSON object with a "decisions" array. Include only artifacts that repre
 }
 
 /**
+ * System prompt for suggestions
+ */
+export const SUGGESTION_SYSTEM_PROMPT = `You are an expert software architect providing feedback on architectural decision records (ADRs).
+
+Your task: Suggest missing consequences, trade-offs, and risks for a given architectural decision.
+
+Guidelines:
+1. Be specific to the context provided
+2. Consider long-term maintenance, security, performance, and team velocity
+3. Provide 3-5 high-quality bullet points
+4. Keep each point concise but informative`
+
+/**
+ * User prompt template for suggestions
+ */
+export function createSuggestionPrompt(
+  title: string,
+  context: string,
+  decision: string,
+  reasoning: string
+): string {
+  return `Please suggest potential consequences and trade-offs for this architectural decision:
+
+**Title:** ${title}
+**Context:** ${context}
+**Decision:** ${decision}
+**Reasoning:** ${reasoning}
+
+Suggest 3-5 specific consequences that might have been overlooked.`
+}
+
+/**
  * Token cost estimates (approximate)
  */
 export const TOKEN_COSTS = {

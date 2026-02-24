@@ -26,14 +26,20 @@ export async function GET() {
                 );
             }
 
+            // Fetch demo user's enabled repos so pages can load data
+            const demoRepos = await db.repo.findMany({
+                where: { userId: demoUser.id, enabled: true },
+                select: { id: true },
+            });
+
             return NextResponse.json({
                 user: {
                     id: demoUser.id,
                     login: demoUser.login,
-                    avatarUrl: demoUser.avatarUrl,
+                    avatarUrl: demoUser.avatarUrl ?? '',
                 },
                 setupComplete: true,
-                trackedRepoIds: [],
+                trackedRepoIds: demoRepos.map((r) => r.id),
             } satisfies AuthMeResponse);
         }
 

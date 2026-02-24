@@ -64,3 +64,60 @@ export async function GET(
     }
   })(req)
 }
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  return requireAuth(async (request, { user }) => {
+    try {
+      const { id: decisionId } = await params
+      const body = await request.json()
+
+      // Validate decision exists and belongs to user
+      const existing = await db.decision.findUnique({
+        where: { id: decisionId },
+      })
+
+      if (!existing) {
+        return NextResponse.json(
+          { code: 'NOT_FOUND', message: 'Decision not found' },
+          { status: 404 }
+        )
+      }
+
+      if (existing.userId !== user.id) {
+        return NextResponse.json(
+          { code: 'FORBIDDEN', message: 'Access denied' },
+          { status: 403 }
+        )
+      }
+
+      // Update decision
+      const decision = await db.decision.update({
+        where: { id: decisionId },
+        data: {
+          title: body.title,
+          context: body.context,
+          decision: body.decision,
+          reasoning: body.reasoning,
+          consequences: body.consequences,
+          alternatives: body.alternatives,
+          tags: body.tags,
+        },
+      })
+
+      return NextResponse.json({ decision })
+    } catch (error) {
+      const formatted = handleError(error)
+      return NextResponse.json(
+        {
+          code: formatted.code,
+          message: formatted.message,
+          details: formatted.details,
+        },
+        { status: formatted.statusCode }
+      )
+    }
+  })(req)
+}

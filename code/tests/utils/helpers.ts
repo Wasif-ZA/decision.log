@@ -21,6 +21,7 @@ import { FIXTURES } from '../fixtures'
  */
 export async function generateTestToken(
   userId: string,
+  login: string = 'testuser',
   expiresIn: string = '30d'
 ): Promise<string> {
   const secret = new TextEncoder().encode(
@@ -28,10 +29,15 @@ export async function generateTestToken(
   )
 
   const payload: JWTPayload = {
-    userId,
+    sub: userId,
+    login,
+    setupComplete: true,
+    trackedRepoIds: [],
+    iat: Math.floor(Date.now() / 1000),
+    exp: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
   }
 
-  const token = await new SignJWT(payload)
+  const token = await new SignJWT(payload as any)
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime(expiresIn)
@@ -49,14 +55,19 @@ export async function generateExpiredToken(userId: string): Promise<string> {
   )
 
   const payload: JWTPayload = {
-    userId,
+    sub: userId,
+    login: 'testuser',
+    setupComplete: true,
+    trackedRepoIds: [],
+    iat: Math.floor(Date.now() / 1000) - 7200,
+    exp: Math.floor(Date.now() / 1000) - 3600,
   }
 
   // Create token that expired 1 hour ago
-  const token = await new SignJWT(payload)
+  const token = await new SignJWT(payload as any)
     .setProtectedHeader({ alg: 'HS256' })
-    .setIssuedAt(Math.floor(Date.now() / 1000) - 7200) // 2 hours ago
-    .setExpirationTime(Math.floor(Date.now() / 1000) - 3600) // 1 hour ago
+    .setIssuedAt(payload.iat)
+    .setExpirationTime(payload.exp)
     .sign(secret)
 
   return token
@@ -356,10 +367,21 @@ export function captureConsole() {
 // ============================================================================
 
 /**
- * Clean up test data (placeholder for when database is implemented)
+ * Clean up test data
  */
 export async function cleanupTestData(): Promise<void> {
-  // TODO: Implement when database is set up
-  // await prisma.user.deleteMany({ where: { email: { contains: '@example.com' } } })
-  // await prisma.repo.deleteMany({ where: { fullName: { startsWith: 'test-' } } })
+  const { db } = await import('@/lib/db')
+  const tablenames = await db.$queryRaw<
+    Array<{ tablename: string }>
+  >`SELECT tablename FROM pg_tables WHERE schemaname='public'`
+
+  const tables = tablenames
+    .map(({ tablename }) => tablename)
+    .filter((name) => name !== '_prisma_migrations')
+    .map((name) => `"public"."${name}"`)
+    .join(', ')
+
+  if (tables) {
+    await db.$executeRawUnsafe(`TRUNCATE TABLE ${tables} CASCADE;`)
+  }
 }

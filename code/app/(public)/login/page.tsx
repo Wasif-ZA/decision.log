@@ -10,6 +10,8 @@ import { Github, AlertCircle, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { logEvent } from '@/lib/debugLog';
 
+const isDemoMode = process.env.NEXT_PUBLIC_DEMO_MODE === 'true';
+
 export default function LoginPage() {
     const searchParams = useSearchParams();
     const [isLoading, setIsLoading] = useState(false);
@@ -100,12 +102,30 @@ export default function LoginPage() {
                         Continue with GitHub
                     </Button>
 
+                    {/* Demo Mode */}
+                    {isDemoMode && (
+                        <div className="mt-6 pt-6 border-t border-base-200">
+                            <Button
+                                onClick={() => { window.location.href = '/timeline'; }}
+                                variant="secondary"
+                                className="w-full"
+                            >
+                                Try Demo
+                            </Button>
+                            <p className="mt-2 text-xs text-base-400 text-center">
+                                Browse sample data without signing in
+                            </p>
+                        </div>
+                    )}
+
                     {/* Permissions Note */}
-                    <p className="mt-6 text-xs text-base-400 text-center leading-relaxed">
-                        We'll request read-only access to your repositories.
-                        <br />
-                        You can revoke access at any time from GitHub.
-                    </p>
+                    {!isDemoMode && (
+                        <p className="mt-6 text-xs text-base-400 text-center leading-relaxed">
+                            We'll request read-only access to your repositories.
+                            <br />
+                            You can revoke access at any time from GitHub.
+                        </p>
+                    )}
                 </div>
 
                 {/* Footer */}
