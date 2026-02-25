@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import type { Prisma } from '@prisma/client'
 import { requireAuth } from '@/lib/auth/requireAuth'
-import { requireRepoAccess } from '@/lib/auth/requireRepoAccess'
+import { requireRepoAccessByIdentifier } from '@/lib/auth/requireRepoAccess'
 import { handleError } from '@/lib/errors'
 import { db } from '@/lib/db'
 
@@ -20,14 +20,16 @@ export async function GET(
 ) {
   return requireAuth(async (request, { user }) => {
     try {
-      const { id: repoId } = await params
-      await requireRepoAccess(user.id, repoId)
+      const { id: repoIdentifier } = await params
+      const repo = await requireRepoAccessByIdentifier(user.id, repoIdentifier)
 
       const { searchParams } = new URL(request.url)
 
       // Optional filters
       const tag = searchParams.get('tag')
       const search = searchParams.get('search')
+      const from = searchParams.get('from')
+      const to = searchParams.get('to')
       const sortByParam = searchParams.get('sortBy') ?? 'createdAt'
       const sortBy = ALLOWED_SORT_FIELDS.has(sortByParam)
         ? (sortByParam as 'createdAt' | 'title' | 'significance')
@@ -36,7 +38,7 @@ export async function GET(
 
       // Build where clause
       const where: Prisma.DecisionWhereInput = {
-        repoId,
+        repoId: repo.id,
         userId: user.id,
       }
 
@@ -52,6 +54,13 @@ export async function GET(
         ]
       }
 
+      if (from || to) {
+        where.createdAt = {
+          ...(from ? { gte: new Date(from) } : {}),
+          ...(to ? { lte: new Date(to + 'T23:59:59.999Z') } : {}),
+        }
+      }
+
       // Get decisions with related data
       const decisions = await db.decision.findMany({
         where,
@@ -59,6 +68,12 @@ export async function GET(
           candidate: {
             include: {
               artifact: true,
+            },
+          },
+          repo: {
+            select: {
+              id: true,
+              fullName: true,
             },
           },
         },

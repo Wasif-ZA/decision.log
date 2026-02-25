@@ -11,6 +11,7 @@ import { db } from '@/lib/db';
 import { handleError } from '@/lib/errors';
 import { validateBody } from '@/lib/validation';
 import { signJWT, getSessionCookieOptions, SESSION_COOKIE_NAME } from '@/lib/jwt';
+import { blockDemoWrites } from '@/lib/demoWriteGuard';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,6 +22,9 @@ const CompleteSetupSchema = z.object({
 
 export const POST = requireAuth(async (request: NextRequest, { user }) => {
     try {
+        const demoBlock = blockDemoWrites(user.login);
+        if (demoBlock) return demoBlock;
+
         const cookieStore = await cookies();
         const { repoId, branchName } = await validateBody(request, CompleteSetupSchema);
         const repo = await requireRepoAccessByIdentifier(user.id, repoId);

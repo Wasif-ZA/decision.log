@@ -7,11 +7,12 @@
 import { useState, useEffect } from 'react';
 import { Download, FileJson, FileText, Loader2, CheckCircle } from 'lucide-react';
 import { useAppState } from '@/context/AppContext';
-import { NoRepoEmptyState, NoDataEmptyState } from '@/components/ui/EmptyState';
+import { apiFetch } from '@/lib/apiFetch';
+import { NoRepoEmptyState, NoDataEmptyState, NotTrackedEmptyState } from '@/components/ui/EmptyState';
 import { LoadingSkeleton } from '@/components/ui/LoadingSkeleton';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { Button } from '@/components/ui/Button';
-import type { ExportResponse } from '@/types/app';
+import type { ExportResponse, ApiError } from '@/types/app';
 
 // ─────────────────────────────────────────────
 // Export Format Card Component
@@ -112,6 +113,7 @@ export default function ExportsPage() {
     const [previewData, setPreviewData] = useState<ExportResponse | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [errorCode, setErrorCode] = useState<string | undefined>(undefined);
     const [exportingFormat, setExportingFormat] = useState<'json' | 'markdown' | null>(null);
     const [exportedFormats, setExportedFormats] = useState<Set<string>>(new Set());
 
@@ -123,19 +125,15 @@ export default function ExportsPage() {
 
         setLoading(true);
         setError(null);
+        setErrorCode(undefined);
 
         try {
-            const response = await fetch(`/api/repos/${repoId}/export?format=json`);
-
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.message || 'Failed to load export data');
-            }
-
-            const data: ExportResponse = await response.json();
+            const data = await apiFetch<ExportResponse>(`/api/repos/${repoId}/export?format=json`);
             setPreviewData(data);
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'An error occurred');
+            const apiErr = err as ApiError;
+            setError(apiErr.message || 'An error occurred');
+            setErrorCode(apiErr.code);
         } finally {
             setLoading(false);
         }
@@ -225,6 +223,17 @@ export default function ExportsPage() {
 
     // Error state
     if (error) {
+        if (errorCode === 'NOT_FOUND') {
+            return (
+                <div className="p-6">
+                    <div className="mb-6">
+                        <h1 className="text-2xl font-bold text-base-900">Data Exports</h1>
+                    </div>
+                    <NotTrackedEmptyState onEnable={() => window.location.href = `/setup?repo=${repoId}`} />
+                </div>
+            );
+        }
+
         return (
             <div className="p-6">
                 <div className="mb-6">
@@ -233,6 +242,7 @@ export default function ExportsPage() {
                 <ErrorState
                     title="Failed to load export data"
                     message={error}
+                    errorCode={errorCode}
                     onRetry={fetchPreview}
                 />
             </div>

@@ -11,6 +11,7 @@ import { handleError } from '@/lib/errors'
 import { db } from '@/lib/db'
 import { suggestConsequences } from '@/lib/extract/client'
 import { recordExtractionCost } from '@/lib/extract/governor'
+import { blockDemoWrites } from '@/lib/demoWriteGuard'
 
 export async function POST(
   req: NextRequest,
@@ -18,6 +19,9 @@ export async function POST(
 ) {
   return requireAuth(async (request, { user }) => {
     try {
+      const demoBlock = blockDemoWrites(user.login)
+      if (demoBlock) return demoBlock
+
       const { id: decisionId } = await params
 
       // Get decision

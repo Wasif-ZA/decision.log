@@ -7,10 +7,11 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useAppState } from '@/context/AppContext';
-import { NoDataEmptyState, NoRepoEmptyState } from '@/components/ui/EmptyState';
+import { apiFetch } from '@/lib/apiFetch';
+import { NoDataEmptyState, NoRepoEmptyState, NotTrackedEmptyState } from '@/components/ui/EmptyState';
 import { LoadingSkeleton } from '@/components/ui/LoadingSkeleton';
 import { ErrorState } from '@/components/ui/ErrorState';
-import type { DecisionDetail, TimelineResponse } from '@/types/app';
+import type { DecisionDetail, TimelineResponse, ApiError } from '@/types/app';
 
 // ─────────────────────────────────────────────
 // Timeline Item Component
@@ -57,11 +58,10 @@ function TimelineItem({ decision, isLast }: TimelineItemProps) {
                 <div className="flex flex-col gap-2 mt-2">
                     <div className="flex items-center gap-4 text-sm">
                         <span
-                            className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium border ${
-                                decision.significance > 0.8
+                            className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium border ${decision.significance > 0.8
                                     ? 'bg-green-50 text-green-700 border-green-200'
                                     : 'bg-amber-50 text-amber-900 border-amber-200'
-                            }`}
+                                }`}
                         >
                             Significance: {decision.significance.toFixed(2)}
                         </span>
@@ -105,10 +105,11 @@ function TimelineItem({ decision, isLast }: TimelineItemProps) {
 // ─────────────────────────────────────────────
 
 export default function TimelinePage() {
-    const { selectedRepoId, trackedRepoIds } = useAppState();
+    const { selectedRepoId, trackedRepoIds, dateRange } = useAppState();
     const [decisions, setDecisions] = useState<DecisionDetail[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [errorCode, setErrorCode] = useState<string | undefined>(undefined);
 
     // Use selected repo or first tracked repo
     const repoId = selectedRepoId || trackedRepoIds[0];
@@ -118,19 +119,22 @@ export default function TimelinePage() {
 
         setLoading(true);
         setError(null);
+        setErrorCode(undefined);
 
         try {
-            const response = await fetch(`/api/repos/${repoId}/timeline`);
+            const params = new URLSearchParams();
+            if (dateRange.from) params.set('from', dateRange.from);
+            if (dateRange.to) params.set('to', dateRange.to);
+            const qs = params.toString();
 
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.message || 'Failed to fetch timeline');
-            }
-
-            const data: TimelineResponse = await response.json();
+            const data = await apiFetch<TimelineResponse>(
+                `/api/repos/${repoId}/timeline${qs ? `?${qs}` : ''}`
+            );
             setDecisions(data.decisions);
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'An error occurred');
+            const apiErr = err as ApiError;
+            setError(apiErr.message || 'An error occurred');
+            setErrorCode(apiErr.code);
         } finally {
             setLoading(false);
         }
@@ -138,7 +142,7 @@ export default function TimelinePage() {
 
     useEffect(() => {
         fetchTimeline();
-    }, [repoId]);
+    }, [repoId, dateRange.from, dateRange.to]);
 
     // No repo selected
     if (!repoId) {
@@ -174,6 +178,17 @@ export default function TimelinePage() {
 
     // Error state
     if (error) {
+        if (errorCode === 'NOT_FOUND') {
+            return (
+                <div className="p-6">
+                    <div className="mb-6">
+                        <h1 className="text-2xl font-bold text-base-900">Timeline</h1>
+                    </div>
+                    <NotTrackedEmptyState onEnable={() => window.location.href = `/setup?repo=${repoId}`} />
+                </div>
+            );
+        }
+
         return (
             <div className="p-6">
                 <div className="mb-6">
@@ -182,6 +197,7 @@ export default function TimelinePage() {
                 <ErrorState
                     title="Failed to load timeline"
                     message={error}
+                    errorCode={errorCode}
                     onRetry={fetchTimeline}
                 />
             </div>

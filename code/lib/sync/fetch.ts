@@ -78,13 +78,13 @@ export async function fetchPullRequests(
           where: {
             repoId_githubId_type: {
               repoId,
-              githubId: pr.number,
+              githubId: String(pr.number),
               type: 'pr',
             },
           },
           create: {
             repoId,
-            githubId: pr.number,
+            githubId: String(pr.number),
             type: 'pr',
             url: pr.html_url,
             branch: pr.head.ref,
@@ -202,13 +202,13 @@ export async function fetchCommits(
           where: {
             repoId_githubId_type: {
               repoId,
-              githubId: parseInt(commit.sha.slice(0, 8), 16), // Use first 8 chars as int
+              githubId: commit.sha,
               type: 'commit',
             },
           },
           create: {
             repoId,
-            githubId: parseInt(commit.sha.slice(0, 8), 16),
+            githubId: commit.sha,
             type: 'commit',
             url: commit.html_url,
             title: commit.commit.message.split('\n')[0], // First line

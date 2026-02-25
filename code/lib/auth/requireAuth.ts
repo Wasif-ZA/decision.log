@@ -10,6 +10,9 @@ import { verifyJWT, SESSION_COOKIE_NAME } from '@/lib/jwt'
 import { db, type User } from '@/lib/db'
 import { UnauthorizedError, handleError } from '@/lib/errors'
 import { DEMO_LOGIN, isDemoModeEnabled } from '@/lib/demoMode'
+import { validateCsrf } from '@/lib/csrf'
+
+const CSRF_PROTECTED_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE'])
 
 export interface AuthContext {
   user: User
@@ -34,6 +37,12 @@ export function requireAuth<T extends AuthContext>(
 ) {
   return async (req: NextRequest): Promise<Response> => {
     try {
+      // Validate CSRF token for mutation requests
+      if (CSRF_PROTECTED_METHODS.has(req.method)) {
+        const csrfError = validateCsrf(req)
+        if (csrfError) return csrfError
+      }
+
       // Extract JWT from cookie
       const token = req.cookies.get(SESSION_COOKIE_NAME)?.value
 

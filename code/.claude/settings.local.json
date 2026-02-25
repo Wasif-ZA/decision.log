@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(tail:*)",
+      "Bash(head:*)",
+      "Bash(grep:*)",
+      "Bash(cd \"C:/Users/wasif/OneDrive/Desktop/teehee/03 Projects/decision.log/code\" && npx eslint components/Setup/steps/ChooseBranchStep.tsx 2>&1)",
+      "Bash(cd \"C:/Users/wasif/OneDrive/Desktop/teehee/03 Projects/decision.log/code\" && npx eslint lib/csrf.ts app/api/auth/csrf/route.ts lib/apiFetch.ts 2>&1)",
+      "Bash(grep FAIL\\\\|403:*)"
+    ]
+  }
+}

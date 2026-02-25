@@ -306,24 +306,3 @@ function generateReasoning(
 
   return `Noise (${score.toFixed(2)}): Likely not an architectural decision. ${penalties.join(', ')}.`
 }
-
-/**
- * Filter artifacts through sieve and create candidates
- */
-export async function sieveArtifacts(
-  repoId: string,
-  userId: string,
-  _threshold: number = 0.4
-): Promise<{
-  processedCount: number
-  candidatesCreated: number
-  avgScore: number
-}> {
-  void repoId
-  void userId
-  void _threshold
-
-  throw new Error(
-    'sieveArtifacts is not implemented. Use syncRepository in lib/sync/orchestrator.ts instead.'
-  )
-}

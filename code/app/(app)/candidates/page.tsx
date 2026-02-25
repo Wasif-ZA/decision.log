@@ -7,12 +7,13 @@
 import { useState, useEffect } from 'react';
 import { CheckCircle, XCircle, ExternalLink, Loader2 } from 'lucide-react';
 import { useAppState } from '@/context/AppContext';
-import { NoDataEmptyState, NoRepoEmptyState } from '@/components/ui/EmptyState';
+import { apiFetch } from '@/lib/apiFetch';
+import { NoDataEmptyState, NoRepoEmptyState, NotTrackedEmptyState } from '@/components/ui/EmptyState';
 import { LoadingSkeleton } from '@/components/ui/LoadingSkeleton';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/ui/Toast';
-import type { Candidate, CandidatesResponse } from '@/types/app';
+import type { Candidate, CandidatesResponse, ApiError } from '@/types/app';
 
 // ─────────────────────────────────────────────
 // Candidate Card Component
@@ -40,8 +41,8 @@ function CandidateCard({ candidate, onApprove, onDismiss, isProcessing }: Candid
     const scoreColor = candidate.sieveScore > 0.8
         ? 'bg-green-500'
         : candidate.sieveScore > 0.6
-        ? 'bg-amber-500'
-        : 'bg-base-400';
+            ? 'bg-amber-500'
+            : 'bg-base-400';
 
     return (
         <div className="p-4 bg-white border border-base-200 rounded-lg">
@@ -144,6 +145,7 @@ export default function CandidatesPage() {
     const [candidates, setCandidates] = useState<Candidate[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [errorCode, setErrorCode] = useState<string | undefined>(undefined);
     const [processingIds, setProcessingIds] = useState<Set<string>>(new Set());
 
     // Use selected repo or first tracked repo
@@ -154,20 +156,16 @@ export default function CandidatesPage() {
 
         setLoading(true);
         setError(null);
+        setErrorCode(undefined);
 
         try {
-            const response = await fetch(`/api/repos/${repoId}/candidates`);
-
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.message || 'Failed to fetch candidates');
-            }
-
-            const data: CandidatesResponse = await response.json();
+            const data = await apiFetch<CandidatesResponse>(`/api/repos/${repoId}/candidates`);
             // Only show pending candidates
             setCandidates(data.candidates.filter(c => c.status === 'pending'));
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'An error occurred');
+            const apiErr = err as ApiError;
+            setError(apiErr.message || 'An error occurred');
+            setErrorCode(apiErr.code);
         } finally {
             setLoading(false);
         }
@@ -185,19 +183,14 @@ export default function CandidatesPage() {
         setProcessingIds(prev => new Set(prev).add(candidateId));
 
         try {
-            const response = await fetch(`/api/candidates/${candidateId}/approve`, {
+            await apiFetch(`/api/candidates/${candidateId}/approve`, {
                 method: 'POST',
             });
-
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.message || 'Failed to extract decision');
-            }
 
             // Remove from list on success
             setCandidates(prev => prev.filter(c => c.id !== candidateId));
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Failed to extract decision');
+            setError(err instanceof Error ? err.message : (err as { message?: string })?.message || 'Failed to extract decision');
         } finally {
             setProcessingIds(prev => {
                 const next = new Set(prev);
@@ -215,19 +208,14 @@ export default function CandidatesPage() {
         setProcessingIds(prev => new Set(prev).add(candidateId));
 
         try {
-            const response = await fetch(`/api/candidates/${candidateId}/dismiss`, {
+            await apiFetch(`/api/candidates/${candidateId}/dismiss`, {
                 method: 'POST',
             });
-
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.message || 'Failed to dismiss candidate');
-            }
 
             // Remove from list on success
             setCandidates(prev => prev.filter(c => c.id !== candidateId));
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Failed to dismiss candidate');
+            setError(err instanceof Error ? err.message : (err as { message?: string })?.message || 'Failed to dismiss candidate');
         } finally {
             setProcessingIds(prev => {
                 const next = new Set(prev);
@@ -272,6 +260,17 @@ export default function CandidatesPage() {
 
     // Error state
     if (error) {
+        if (errorCode === 'NOT_FOUND') {
+            return (
+                <div className="p-6">
+                    <div className="mb-6">
+                        <h1 className="text-2xl font-bold text-base-900">Review Candidates</h1>
+                    </div>
+                    <NotTrackedEmptyState onEnable={() => window.location.href = `/setup?repo=${repoId}`} />
+                </div>
+            );
+        }
+
         return (
             <div className="p-6">
                 <div className="mb-6">
@@ -280,6 +279,7 @@ export default function CandidatesPage() {
                 <ErrorState
                     title="Failed to load candidates"
                     message={error}
+                    errorCode={errorCode}
                     onRetry={fetchCandidates}
                 />
             </div>

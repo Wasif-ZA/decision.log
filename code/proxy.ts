@@ -4,7 +4,7 @@
 
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { SESSION_COOKIE_NAME, verifyJWT } from '@/lib/jwt';
+import { SESSION_COOKIE_NAME, verifyJWT, shouldRenewToken, renewJWT, getSessionCookieOptions } from '@/lib/jwt';
 import { isDemoModeEnabled } from '@/lib/demoMode';
 
 // Routes that require authentication (from (app) route group - no /app prefix)
@@ -68,6 +68,19 @@ export async function proxy(request: NextRequest) {
                 if (pathname === '/login') {
                     const redirectTo = setupComplete ? '/timeline' : '/setup';
                     return NextResponse.redirect(new URL(redirectTo, request.url));
+                }
+            }
+
+            // Auto-renew token if near expiry
+            if (payload && shouldRenewToken(payload)) {
+                try {
+                    const newToken = await renewJWT(payload);
+                    const response = NextResponse.next();
+                    const cookieOptions = getSessionCookieOptions(process.env.NODE_ENV === 'production');
+                    response.cookies.set(SESSION_COOKIE_NAME, newToken, cookieOptions);
+                    return response;
+                } catch {
+                    // Token renewal failed, continue with existing token
                 }
             }
         } catch {

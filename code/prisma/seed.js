@@ -11,9 +11,9 @@
 // Idempotent: safe to run multiple times.
 // Usage: npx prisma db seed
 
-const { PrismaClient } = require('@prisma/client');
-const { PrismaPg } = require('@prisma/adapter-pg');
-const pg = require('pg');
+import { PrismaClient } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
+import pg from 'pg';
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool);
@@ -478,7 +478,7 @@ async function main() {
       where: {
         repoId_githubId_type: {
           repoId: repo.id,
-          githubId: 92000000 + i,
+          githubId: String(92000000 + i),
           type: 'pr',
         },
       },
@@ -490,7 +490,7 @@ async function main() {
       },
       create: {
         repoId: repo.id,
-        githubId: 92000000 + i,
+        githubId: String(92000000 + i),
         type: 'pr',
         url: `https://github.com/decisionlog/demo-architecture/pull/${100 + i}`,
         branch: 'main',
@@ -581,7 +581,7 @@ async function main() {
       where: {
         repoId_githubId_type: {
           repoId: repo.id,
-          githubId: 93000000 + i,
+          githubId: String(93000000 + i),
           type: 'pr',
         },
       },
@@ -593,7 +593,7 @@ async function main() {
       },
       create: {
         repoId: repo.id,
-        githubId: 93000000 + i,
+        githubId: String(93000000 + i),
         type: 'pr',
         url: `https://github.com/decisionlog/demo-architecture/pull/${prNumber}`,
         branch: 'main',

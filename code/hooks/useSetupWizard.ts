@@ -7,6 +7,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { logEvent } from '@/lib/debugLog';
+import { apiFetch } from '@/lib/apiFetch';
 import type { WizardStepStatus, WizardProgress } from '@/types/app';
 
 // ─────────────────────────────────────────────
@@ -164,18 +165,13 @@ export function useSetupWizard() {
         setStepStatus(5, 'loading');
 
         try {
-            const response = await fetch('/api/setup/complete', {
+            await apiFetch('/api/setup/complete', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
+                body: {
                     repoId: state.repoId,
                     branchName: state.branchName,
-                }),
+                },
             });
-
-            if (!response.ok) {
-                throw new Error('Failed to complete setup');
-            }
 
             // Clear wizard progress
             localStorage.removeItem(WIZARD_STORAGE_KEY);

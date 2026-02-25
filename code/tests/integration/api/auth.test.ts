@@ -7,11 +7,13 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { generateTestToken } from '../../utils/helpers'
+import { generateTestToken, TEST_CSRF_TOKEN } from '../../utils/helpers'
 import { FIXTURES } from '../../fixtures'
 import { GET as getMe } from '@/app/api/auth/me/route'
 import { POST as logout } from '@/app/api/auth/logout/route'
 import { SESSION_COOKIE_NAME } from '@/lib/jwt'
+import { CSRF_COOKIE_NAME } from '@/lib/csrf'
+import { NextRequest } from 'next/server'
 
 // Mock next/headers
 vi.mock('next/headers', () => ({
@@ -94,8 +96,15 @@ describe('Authentication API', () => {
         delete: deleteMock,
       })
 
+      // Create request with CSRF token
+      const req = new NextRequest('http://localhost:3000/api/auth/logout', {
+        method: 'POST',
+        headers: { 'x-csrf-token': TEST_CSRF_TOKEN },
+      })
+      req.cookies.set(CSRF_COOKIE_NAME, TEST_CSRF_TOKEN)
+
       // Act
-      const response = await logout()
+      const response = await logout(req)
       const data = await response.json()
 
       // Assert

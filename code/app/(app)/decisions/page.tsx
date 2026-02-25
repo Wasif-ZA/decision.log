@@ -8,12 +8,13 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Search, Filter, Tag } from 'lucide-react';
 import { useAppState } from '@/context/AppContext';
-import { NoDataEmptyState, NoRepoEmptyState, NoResultsEmptyState } from '@/components/ui/EmptyState';
+import { apiFetch } from '@/lib/apiFetch';
+import { NoDataEmptyState, NoRepoEmptyState, NoResultsEmptyState, NotTrackedEmptyState } from '@/components/ui/EmptyState';
 import { LoadingSkeleton } from '@/components/ui/LoadingSkeleton';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
-import type { DecisionDetail } from '@/types/app';
+import type { DecisionDetail, ApiError } from '@/types/app';
 
 interface DecisionsResponse {
     decisions: DecisionDetail[];
@@ -46,13 +47,12 @@ function DecisionCard({ decision }: { decision: DecisionDetail }) {
                     {decision.title}
                 </h3>
                 <span
-                    className={`flex-shrink-0 px-2 py-0.5 rounded text-xs font-medium border ${
-                        decision.significance > 0.8
+                    className={`flex-shrink-0 px-2 py-0.5 rounded text-xs font-medium border ${decision.significance > 0.8
                             ? 'bg-green-50 text-green-700 border-green-200'
                             : decision.significance > 0.5
-                            ? 'bg-amber-50 text-amber-700 border-amber-200'
-                            : 'bg-base-100 text-base-600 border-base-200'
-                    }`}
+                                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                : 'bg-base-100 text-base-600 border-base-200'
+                        }`}
                 >
                     {(decision.significance * 100).toFixed(0)}%
                 </span>
@@ -94,11 +94,12 @@ function DecisionCard({ decision }: { decision: DecisionDetail }) {
 // ─────────────────────────────────────────────
 
 export default function DecisionsPage() {
-    const { selectedRepoId, trackedRepoIds } = useAppState();
+    const { selectedRepoId, trackedRepoIds, dateRange } = useAppState();
     const [decisions, setDecisions] = useState<DecisionDetail[]>([]);
     const [allTags, setAllTags] = useState<string[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [errorCode, setErrorCode] = useState<string | undefined>(undefined);
 
     // Filters
     const [searchQuery, setSearchQuery] = useState('');
@@ -113,26 +114,24 @@ export default function DecisionsPage() {
 
         setLoading(true);
         setError(null);
+        setErrorCode(undefined);
 
         try {
             const params = new URLSearchParams();
             if (searchQuery) params.set('search', searchQuery);
             if (selectedTag) params.set('tag', selectedTag);
+            if (dateRange.from) params.set('from', dateRange.from);
+            if (dateRange.to) params.set('to', dateRange.to);
 
-            const response = await fetch(
+            const data = await apiFetch<DecisionsResponse>(
                 `/api/repos/${repoId}/decisions?${params.toString()}`
             );
-
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.message || 'Failed to fetch decisions');
-            }
-
-            const data: DecisionsResponse = await response.json();
             setDecisions(data.decisions);
             setAllTags(data.meta.tags);
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'An error occurred');
+            const apiErr = err as ApiError;
+            setError(apiErr.message || 'An error occurred');
+            setErrorCode(apiErr.code);
         } finally {
             setLoading(false);
         }
@@ -140,7 +139,7 @@ export default function DecisionsPage() {
 
     useEffect(() => {
         fetchDecisions();
-    }, [repoId, searchQuery, selectedTag]);
+    }, [repoId, searchQuery, selectedTag, dateRange.from, dateRange.to]);
 
     const handleSearch = (e: React.FormEvent) => {
         e.preventDefault();
@@ -186,6 +185,17 @@ export default function DecisionsPage() {
 
     // Error state
     if (error) {
+        if (errorCode === 'NOT_FOUND') {
+            return (
+                <div className="p-6">
+                    <div className="mb-6">
+                        <h1 className="text-2xl font-bold text-base-900">Decisions Registry</h1>
+                    </div>
+                    <NotTrackedEmptyState onEnable={() => window.location.href = `/setup?repo=${repoId}`} />
+                </div>
+            );
+        }
+
         return (
             <div className="p-6">
                 <div className="mb-6">
@@ -194,6 +204,7 @@ export default function DecisionsPage() {
                 <ErrorState
                     title="Failed to load decisions"
                     message={error}
+                    errorCode={errorCode}
                     onRetry={fetchDecisions}
                 />
             </div>
@@ -244,11 +255,10 @@ export default function DecisionsPage() {
                             <button
                                 key={tag}
                                 onClick={() => setSelectedTag(selectedTag === tag ? null : tag)}
-                                className={`px-2 py-1 text-xs rounded transition-colors ${
-                                    selectedTag === tag
+                                className={`px-2 py-1 text-xs rounded transition-colors ${selectedTag === tag
                                         ? 'bg-base-900 text-white'
                                         : 'bg-white border border-base-200 text-base-700 hover:border-base-300'
-                                }`}
+                                    }`}
                             >
                                 {tag}
                             </button>

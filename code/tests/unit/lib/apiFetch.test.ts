@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
-import { apiFetch, isErrorCode } from '@/lib/apiFetch'
+import { apiFetch, isErrorCode, clearCsrfToken } from '@/lib/apiFetch'
 import { ERROR_CODES } from '@/types/app'
 
 // Mock fetch globally
@@ -32,6 +32,7 @@ describe('apiFetch', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     window.location.href = ''
+    clearCsrfToken()
   })
 
   afterEach(() => {
@@ -57,6 +58,14 @@ describe('apiFetch', () => {
       const requestBody = { name: 'Test', value: 123 }
       const mockResponse = { success: true, id: 1 }
 
+      // First call: CSRF token fetch
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ token: 'csrf-test-token' }),
+      })
+
+      // Second call: actual POST request
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 201,
@@ -68,6 +77,7 @@ describe('apiFetch', () => {
         body: requestBody,
       })
 
+      // The second call should be the actual POST
       expect(mockFetch).toHaveBeenCalledWith(
         '/api/test',
         expect.objectContaining({
@@ -75,6 +85,7 @@ describe('apiFetch', () => {
           body: JSON.stringify(requestBody),
           headers: expect.objectContaining({
             'Content-Type': 'application/json',
+            'X-CSRF-Token': 'csrf-test-token',
           }),
         })
       )
@@ -154,16 +165,19 @@ describe('apiFetch', () => {
 
       await expect(apiFetch('/api/test')).rejects.toMatchObject({
         code: ERROR_CODES.FORBIDDEN,
-        message: expect.stringContaining('permission'),
+        message: 'Forbidden',
       })
     })
 
-    it('should throw REPO_ACCESS_REVOKED on 403 for repo endpoints', async () => {
+    it('should throw REPO_ACCESS_REVOKED on 403 for repo endpoints with FORBIDDEN code', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
         status: 403,
         statusText: 'Forbidden',
-        json: async () => ({}),
+        json: async () => ({
+          code: ERROR_CODES.FORBIDDEN,
+          message: 'Forbidden',
+        }),
       })
 
       await expect(apiFetch('/api/repos/123/sync')).rejects.toMatchObject({
@@ -172,16 +186,35 @@ describe('apiFetch', () => {
       })
     })
 
-    it('should throw REPO_ACCESS_REVOKED on 404 for repo endpoints', async () => {
+    it('should pass through 403 on repo endpoints without FORBIDDEN code', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        statusText: 'Forbidden',
+        json: async () => ({
+          code: 'SOME_OTHER_ERROR',
+          message: 'Some other error',
+        }),
+      })
+
+      await expect(apiFetch('/api/repos/123/sync')).rejects.toMatchObject({
+        code: 'SOME_OTHER_ERROR',
+      })
+    })
+
+    it('should pass through 404 on repo endpoints as-is', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
         status: 404,
         statusText: 'Not Found',
-        json: async () => ({}),
+        json: async () => ({
+          code: 'NOT_FOUND',
+          message: 'Repository',
+        }),
       })
 
       await expect(apiFetch('/api/sync/status')).rejects.toMatchObject({
-        code: ERROR_CODES.REPO_ACCESS_REVOKED,
+        code: 'NOT_FOUND',
       })
     })
 

@@ -8,6 +8,7 @@ import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Github, AlertCircle, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { apiFetch } from '@/lib/apiFetch';
 import { logEvent } from '@/lib/debugLog';
 
 const isDemoMode = process.env.NEXT_PUBLIC_DEMO_MODE === 'true';
@@ -33,18 +34,12 @@ export default function LoginPage() {
 
         try {
             // Call our auth initiation endpoint
-            const response = await fetch('/api/auth/github', {
+            const data = await apiFetch<{ url: string }>('/api/auth/github', {
                 method: 'POST',
             });
 
-            if (!response.ok) {
-                throw new Error('Failed to initiate GitHub login');
-            }
-
-            const { url } = await response.json();
-
             // Redirect to GitHub OAuth
-            window.location.href = url;
+            window.location.href = data.url;
         } catch (err) {
             setIsLoading(false);
             setError('Failed to connect to GitHub. Please try again.');

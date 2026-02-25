@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/auth/requireAuth'
-import { requireRepoAccess } from '@/lib/auth/requireRepoAccess'
+import { requireRepoAccessByIdentifier } from '@/lib/auth/requireRepoAccess'
 import { handleError } from '@/lib/errors'
 import { db } from '@/lib/db'
 
@@ -17,8 +17,8 @@ export async function GET(
 ) {
   return requireAuth(async (request, { user }) => {
     try {
-      const { id: repoId } = await params
-      await requireRepoAccess(user.id, repoId)
+      const { id: repoIdentifier } = await params
+      const repo = await requireRepoAccessByIdentifier(user.id, repoIdentifier)
 
       const { searchParams } = new URL(request.url)
       const format = searchParams.get('format') ?? 'json'
@@ -26,7 +26,7 @@ export async function GET(
       // Get decisions
       const decisions = await db.decision.findMany({
         where: {
-          repoId,
+          repoId: repo.id,
           userId: user.id,
         },
         include: {
@@ -44,7 +44,7 @@ export async function GET(
       if (format === 'markdown') {
         // Generate markdown in ADR format
         let markdown = '# Architecture Decision Records\n\n'
-        markdown += `Repository: ${repoId}\n`
+        markdown += `Repository: ${repo.fullName}\n`
         markdown += `Exported: ${new Date().toLocaleDateString()}\n\n`
         markdown += '---\n\n'
 
@@ -52,15 +52,15 @@ export async function GET(
           const adrNumber = decisions.length - index
           markdown += `# ${adrNumber}. ${decision.title}\n\n`
           markdown += `**Date:** ${decision.createdAt.toISOString().split('T')[0]}\n\n`
-          
+
           markdown += `## Status\n\nAccepted\n\n`
-          
+
           markdown += `## Context\n\n${decision.context}\n\n`
-          
+
           markdown += `## Decision\n\n${decision.decision}\n\n`
-          
+
           markdown += `## Reasoning\n\n${decision.reasoning}\n\n`
-          
+
           markdown += `## Consequences\n\n${decision.consequences}\n\n`
 
           if (decision.alternatives) {
@@ -86,7 +86,7 @@ export async function GET(
       // Default: JSON
       return NextResponse.json({
         repo: await db.repo.findUnique({
-          where: { id: repoId },
+          where: { id: repo.id },
           select: { fullName: true },
         }),
         decisions: decisions.map((d) => ({

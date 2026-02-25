@@ -9,6 +9,7 @@ import { GitBranch, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { ListItemSkeleton } from '@/components/ui/LoadingSkeleton';
 import { ErrorState } from '@/components/ui/ErrorState';
+import { apiFetch } from '@/lib/apiFetch';
 import { logEvent } from '@/lib/debugLog';
 import type { WizardStepStatus, Repo } from '@/types/app';
 
@@ -35,21 +36,17 @@ export function PickRepoStep({
         logEvent('fetch_repos_start');
 
         try {
-            const response = await fetch('/api/repos');
-
-            if (!response.ok) {
-                throw new Error('Failed to fetch repositories');
-            }
-
-            const data = await response.json();
+            const data = await apiFetch<{ repos: Repo[] }>('/api/repos');
             setRepos(data.repos);
             setStepStatus('success');
             logEvent('fetch_repos_success', { count: data.repos.length });
         } catch (error) {
-            setStepStatus('error', String(error));
-            logEvent('fetch_repos_error', { error: String(error) });
+            const message = (error as { message?: string })?.message || String(error);
+            setStepStatus('error', message);
+            logEvent('fetch_repos_error', { error: message });
         }
-    }, [setStepStatus]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     useEffect(() => {
         fetchRepos();
@@ -78,22 +75,17 @@ export function PickRepoStep({
         setStepStatus('loading');
 
         try {
-            const response = await fetch(`/api/repos/${repo.id}/enable`, {
-                method: 'POST',
-            });
-
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.message || 'Failed to enable repository');
-            }
-
-            const data = await response.json();
+            const data = await apiFetch<{ repo: { id: string; fullName: string } }>(
+                `/api/repos/${repo.id}/enable`,
+                { method: 'POST' }
+            );
             onSelect(data.repo.id, data.repo.fullName || repo.fullName);
             setStepStatus('success');
             onNext();
         } catch (error) {
-            setStepStatus('error', String(error));
-            logEvent('enable_repo_error', { error: String(error), repoId: repo.id });
+            const message = (error as { message?: string })?.message || String(error);
+            setStepStatus('error', message);
+            logEvent('enable_repo_error', { error: message, repoId: repo.id });
         } finally {
             setIsEnabling(false);
         }

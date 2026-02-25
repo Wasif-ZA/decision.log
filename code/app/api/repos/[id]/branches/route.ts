@@ -6,7 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/auth/requireAuth';
-import { requireRepoAccess } from '@/lib/auth/requireRepoAccess';
+import { requireRepoAccessByIdentifier } from '@/lib/auth/requireRepoAccess';
 import { decrypt } from '@/lib/crypto';
 import { GitHubError, handleError } from '@/lib/errors';
 
@@ -22,8 +22,8 @@ export async function GET(
 ) {
     return requireAuth(async (req, { user }) => {
         try {
-            const { id: repoId } = await params;
-            const repo = await requireRepoAccess(user.id, repoId);
+            const { id: repoIdentifier } = await params;
+            const repo = await requireRepoAccessByIdentifier(user.id, repoIdentifier);
 
             // Decrypt GitHub token
             if (!user.githubTokenEncrypted || !user.githubTokenIv) {

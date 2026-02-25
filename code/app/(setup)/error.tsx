@@ -12,7 +12,7 @@ export default function SetupError({
     error,
     reset,
 }: {
-    error: Error & { digest?: string };
+    error: Error & { digest?: string; code?: string; retryAfter?: number };
     reset: () => void;
 }) {
     return (
@@ -20,6 +20,8 @@ export default function SetupError({
             <ErrorState
                 title="Setup Error"
                 message={error.message || 'Something went wrong during setup'}
+                errorCode={error.code}
+                retryAfter={error.retryAfter}
                 onRetry={reset}
             />
             <div className="mt-4 text-center">

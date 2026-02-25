@@ -13,6 +13,7 @@ import { requireRepoAccess } from '@/lib/auth/requireRepoAccess'
 import { decrypt } from '@/lib/crypto'
 import { GitHubError, handleError } from '@/lib/errors'
 import { db } from '@/lib/db'
+import { blockDemoWrites } from '@/lib/demoWriteGuard'
 
 export async function POST(
   req: NextRequest,
@@ -20,6 +21,9 @@ export async function POST(
 ) {
   return requireAuth(async (request, { user }) => {
     try {
+      const demoBlock = blockDemoWrites(user.login)
+      if (demoBlock) return demoBlock
+
       const { id: repoIdentifier } = await params
 
       // Already-tracked repo path
@@ -72,12 +76,12 @@ export async function POST(
       const repoName = githubRepo.name
       const fullName = githubRepo.full_name
 
-      const existingRepo = await db.repo.findUnique({
-        where: { fullName },
+      const existingRepo = await db.repo.findFirst({
+        where: { fullName, NOT: { userId: user.id } },
         select: { userId: true },
       })
 
-      if (existingRepo && existingRepo.userId !== user.id) {
+      if (existingRepo) {
         return NextResponse.json(
           { code: 'FORBIDDEN', message: 'Repository is already tracked by another account' },
           { status: 403 }

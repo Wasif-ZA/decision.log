@@ -125,7 +125,7 @@ Guidelines:
 5. Be concise but comprehensive
 6. If no significant architectural decision exists, return null for that PR
 
-Output format: JSON matching the DecisionExtraction schema.`
+Output format: Return ONLY a raw JSON object matching the DecisionExtraction schema. Do NOT include markdown code blocks, do NOT include any preamble or postamble text, and do NOT include any conversational filler. Your entire response must be valid JSON.`
 
 /**
  * User prompt template for extraction

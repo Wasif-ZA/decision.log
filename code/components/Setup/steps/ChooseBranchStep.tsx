@@ -9,6 +9,7 @@ import { GitBranch } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { ListItemSkeleton } from '@/components/ui/LoadingSkeleton';
 import { ErrorState } from '@/components/ui/ErrorState';
+import { apiFetch } from '@/lib/apiFetch';
 import { logEvent } from '@/lib/debugLog';
 import type { WizardStepStatus } from '@/types/app';
 
@@ -38,13 +39,7 @@ export function ChooseBranchStep({
         logEvent('fetch_branches_start', { repoId });
 
         try {
-            const response = await fetch(`/api/repos/${repoId}/branches`);
-
-            if (!response.ok) {
-                throw new Error('Failed to fetch branches');
-            }
-
-            const data = await response.json();
+            const data = await apiFetch<{ branches: string[] }>(`/api/repos/${repoId}/branches`);
             setBranches(data.branches);
 
             // Auto-select main/master if available and nothing selected
@@ -60,8 +55,9 @@ export function ChooseBranchStep({
             setStepStatus('success');
             logEvent('fetch_branches_success', { count: data.branches.length });
         } catch (error) {
-            setStepStatus('error', String(error));
-            logEvent('fetch_branches_error', { error: String(error) });
+            const message = (error as { message?: string })?.message || String(error);
+            setStepStatus('error', message);
+            logEvent('fetch_branches_error', { error: message });
         }
     };
 

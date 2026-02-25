@@ -10,7 +10,7 @@ export default function AppError({
     error,
     reset,
 }: {
-    error: Error & { digest?: string };
+    error: Error & { digest?: string; code?: string; retryAfter?: number };
     reset: () => void;
 }) {
     return (
@@ -18,6 +18,8 @@ export default function AppError({
             <ErrorState
                 title="Something went wrong"
                 message={error.message || 'An unexpected error occurred'}
+                errorCode={error.code}
+                retryAfter={error.retryAfter}
                 onRetry={reset}
             />
         </div>

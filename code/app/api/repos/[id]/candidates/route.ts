@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/auth/requireAuth'
-import { requireRepoAccess } from '@/lib/auth/requireRepoAccess'
+import { requireRepoAccessByIdentifier } from '@/lib/auth/requireRepoAccess'
 import { handleError } from '@/lib/errors'
 import { db } from '@/lib/db'
 
@@ -17,13 +17,13 @@ export async function GET(
 ) {
   return requireAuth(async (request, { user }) => {
     try {
-      const { id: repoId } = await params
-      await requireRepoAccess(user.id, repoId)
+      const { id: repoIdentifier } = await params
+      const repo = await requireRepoAccessByIdentifier(user.id, repoIdentifier)
 
       // Get candidates with artifacts
       const candidates = await db.candidate.findMany({
         where: {
-          repoId,
+          repoId: repo.id,
           userId: user.id,
         },
         include: {

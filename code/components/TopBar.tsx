@@ -5,8 +5,10 @@
 // ===========================================
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Menu, Search, ChevronDown, LogOut, User as UserIcon } from 'lucide-react';
 import { useAppState } from '@/context/AppContext';
+import { SyncButton } from '@/components/sync/SyncButton';
 import { Select } from './ui/Select';
 import { Input } from './ui/Input';
 
@@ -28,8 +30,15 @@ export function TopBar({ onMenuClick }: TopBarProps) {
         logout,
     } = useAppState();
 
+    const router = useRouter();
     const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
+
+    const handleSearchSubmit = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key === 'Enter' && searchQuery.trim()) {
+            router.push(`/decisions?search=${encodeURIComponent(searchQuery.trim())}`);
+        }
+    };
 
     // Repo options for select
     const repoOptions = availableRepos.map(repo => ({
@@ -59,7 +68,20 @@ export function TopBar({ onMenuClick }: TopBarProps) {
                 <Select
                     options={repoOptions}
                     value={selectedRepoId || ''}
-                    onChange={(e) => setSelectedRepo(e.target.value || null)}
+                    onChange={(e) => {
+                        const repoId = e.target.value;
+                        if (!repoId) {
+                            setSelectedRepo(null);
+                            return;
+                        }
+
+                        const selectedRepo = availableRepos.find(r => r.id === repoId);
+                        if (selectedRepo && !selectedRepo.enabled) {
+                            router.push(`/setup?repo=${repoId}`);
+                        } else {
+                            setSelectedRepo(repoId);
+                        }
+                    }}
                     placeholder="Select repo"
                     aria-label="Repository"
                 />
@@ -96,6 +118,13 @@ export function TopBar({ onMenuClick }: TopBarProps) {
                 />
             </div>
 
+            {/* Sync Button */}
+            {selectedRepoId && (
+                <div className="hidden sm:block">
+                    <SyncButton repoId={selectedRepoId} />
+                </div>
+            )}
+
             {/* Spacer */}
             <div className="flex-1" />
 
@@ -107,6 +136,7 @@ export function TopBar({ onMenuClick }: TopBarProps) {
                         type="text"
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
+                        onKeyDown={handleSearchSubmit}
                         placeholder="Search decisions..."
                         className="w-full pl-9 pr-3 py-2 rounded-lg border border-base-200 text-sm
                                    bg-white shadow-sm

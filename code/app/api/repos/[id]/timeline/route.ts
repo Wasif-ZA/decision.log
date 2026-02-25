@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/auth/requireAuth'
-import { requireRepoAccess } from '@/lib/auth/requireRepoAccess'
+import { requireRepoAccessByIdentifier } from '@/lib/auth/requireRepoAccess'
 import { handleError } from '@/lib/errors'
 import { db } from '@/lib/db'
 
@@ -17,19 +17,39 @@ export async function GET(
 ) {
   return requireAuth(async (request, { user }) => {
     try {
-      const { id: repoId } = await params
-      await requireRepoAccess(user.id, repoId)
+      const { id: repoIdentifier } = await params
+      const repo = await requireRepoAccessByIdentifier(user.id, repoIdentifier)
+
+      const { searchParams } = new URL(request.url)
+      const from = searchParams.get('from')
+      const to = searchParams.get('to')
+
+      // Build where clause with optional date range
+      const where: Record<string, unknown> = {
+        repoId: repo.id,
+        userId: user.id,
+      }
+
+      if (from || to) {
+        where.createdAt = {
+          ...(from ? { gte: new Date(from) } : {}),
+          ...(to ? { lte: new Date(to + 'T23:59:59.999Z') } : {}),
+        }
+      }
 
       // Get decisions with candidates and artifacts
       const decisions = await db.decision.findMany({
-        where: {
-          repoId,
-          userId: user.id,
-        },
+        where,
         include: {
           candidate: {
             include: {
               artifact: true,
+            },
+          },
+          repo: {
+            select: {
+              id: true,
+              fullName: true,
             },
           },
         },

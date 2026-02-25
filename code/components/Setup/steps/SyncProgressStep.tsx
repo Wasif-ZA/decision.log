@@ -8,8 +8,9 @@ import { useState, useEffect, useRef } from 'react';
 import { RefreshCw, CheckCircle, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { ErrorState } from '@/components/ui/ErrorState';
+import { apiFetch } from '@/lib/apiFetch';
 import { logEvent } from '@/lib/debugLog';
-import type { WizardStepStatus, SyncStartResponse, SyncStatusResponse } from '@/types/app';
+import type { WizardStepStatus } from '@/types/app';
 
 interface SyncProgressStepProps {
     stepState: { status: WizardStepStatus; error?: string };
@@ -18,6 +19,14 @@ interface SyncProgressStepProps {
     onNext: () => void;
     onBack: () => void;
     setStepStatus: (status: WizardStepStatus, error?: string) => void;
+}
+
+interface SyncRunResponse {
+    id: string;
+    status: string;
+    prsFetched: number;
+    candidatesCreated: number;
+    errorMessage: string | null;
 }
 
 export function SyncProgressStep({
@@ -30,8 +39,8 @@ export function SyncProgressStep({
 }: SyncProgressStepProps) {
     const [progress, setProgress] = useState(0);
     const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'complete' | 'error'>('idle');
-    const [jobId, setJobId] = useState<string | null>(null);
     const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+    const mountedRef = useRef(true);
 
     const startSync = async () => {
         setStepStatus('loading');
@@ -40,72 +49,84 @@ export function SyncProgressStep({
         logEvent('sync_start', { repoId, branchName });
 
         try {
-            const response = await fetch('/api/sync/start', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ repoId, branchName }),
-            });
+            const data = await apiFetch<{ success: boolean; syncRun: SyncRunResponse | null }>(
+                `/api/repos/${repoId}/sync`,
+                { method: 'POST' }
+            );
 
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.message || 'Failed to start sync');
+            if (!mountedRef.current) return;
+
+            if (data.success && data.syncRun) {
+                logEvent('sync_started', { status: data.syncRun.status, syncRunId: data.syncRun.id });
+
+                if (data.syncRun.status === 'complete') {
+                    // Sync completed synchronously
+                    setProgress(100);
+                    setSyncStatus('complete');
+                    setStepStatus('success');
+                    logEvent('sync_complete');
+                } else if (data.syncRun.status === 'failed') {
+                    setSyncStatus('error');
+                    setStepStatus('error', data.syncRun.errorMessage || 'Sync failed');
+                } else {
+                    // Still in progress, start polling
+                    pollSyncStatus();
+                }
+            } else {
+                throw new Error('Failed to start sync');
             }
-
-            const data: SyncStartResponse = await response.json();
-            setJobId(data.jobId);
-
-            logEvent('sync_started', { status: data.status, jobId: data.jobId });
-
-            // Start polling for status
-            pollSyncStatus(data.jobId);
         } catch (error) {
+            if (!mountedRef.current) return;
             setStepStatus('error', String(error));
             setSyncStatus('error');
             logEvent('sync_start_error', { error: String(error) });
         }
     };
 
-    const pollSyncStatus = (id: string) => {
-        // Clear any existing interval
+    const pollSyncStatus = () => {
         if (pollIntervalRef.current) {
             clearInterval(pollIntervalRef.current);
         }
 
         pollIntervalRef.current = setInterval(async () => {
             try {
-                const response = await fetch(`/api/sync/status?jobId=${id}`);
+                const response = await fetch(`/api/repos/${repoId}/sync`);
+                if (!response.ok || !mountedRef.current) return;
 
-                if (!response.ok) {
-                    throw new Error('Failed to fetch sync status');
-                }
+                const data = await response.json();
 
-                const data: SyncStatusResponse = await response.json();
+                if (data.hasSync && data.syncRun) {
+                    const { status } = data.syncRun;
 
-                setProgress(data.progress || 0);
-                setSyncStatus(data.status);
+                    // Simulate progress based on status
+                    if (status === 'fetching') setProgress(33);
+                    else if (status === 'sieving') setProgress(66);
+                    else if (status === 'extracting') setProgress(80);
 
-                if (data.status === 'complete') {
-                    if (pollIntervalRef.current) {
-                        clearInterval(pollIntervalRef.current);
+                    if (status === 'complete') {
+                        setProgress(100);
+                        setSyncStatus('complete');
+                        setStepStatus('success');
+                        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+                        logEvent('sync_complete');
+                    } else if (status === 'failed') {
+                        setSyncStatus('error');
+                        setStepStatus('error', data.syncRun.errorMessage || 'Sync failed');
+                        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+                        logEvent('sync_error', { error: data.syncRun.errorMessage });
                     }
-                    setStepStatus('success');
-                    logEvent('sync_complete');
-                } else if (data.status === 'error') {
-                    if (pollIntervalRef.current) {
-                        clearInterval(pollIntervalRef.current);
-                    }
-                    setStepStatus('error', data.error || 'Sync failed');
-                    logEvent('sync_error', { error: data.error });
                 }
             } catch (error) {
                 logEvent('sync_poll_error', { error: String(error) });
             }
-        }, 2000); // Poll every 2 seconds
+        }, 2000);
     };
 
     // Cleanup on unmount
     useEffect(() => {
+        mountedRef.current = true;
         return () => {
+            mountedRef.current = false;
             if (pollIntervalRef.current) {
                 clearInterval(pollIntervalRef.current);
             }

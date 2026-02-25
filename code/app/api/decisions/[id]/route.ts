@@ -11,6 +11,7 @@ import { requireAuth } from '@/lib/auth/requireAuth'
 import { handleError } from '@/lib/errors'
 import { db } from '@/lib/db'
 import { validateBody } from '@/lib/validation'
+import { blockDemoWrites } from '@/lib/demoWriteGuard'
 
 const UpdateDecisionSchema = z.object({
   title: z.string().min(10).max(200).optional(),
@@ -83,6 +84,9 @@ export async function PATCH(
 ) {
   return requireAuth(async (request, { user }) => {
     try {
+      const demoBlock = blockDemoWrites(user.login)
+      if (demoBlock) return demoBlock
+
       const { id: decisionId } = await params
       const body = await validateBody(request, UpdateDecisionSchema)
 

@@ -46,10 +46,10 @@ model User {
 
 model Repo {
   id         String   @id @default(cuid())
-  githubId   Int      @unique
+  githubId   Int
   owner      String
   name       String
-  fullName   String   @unique // e.g., "owner/repo"
+  fullName   String   // e.g., "owner/repo"
   private    Boolean  @default(false)
   defaultBranch String @default("main")
 
@@ -63,6 +63,10 @@ model Repo {
   lastSyncAt DateTime?
   syncStatus String   @default("idle") // idle, syncing, error
 
+  // Webhook secret
+  webhookSecretEncrypted String?
+  webhookSecretIv        String?
+
   // Timestamps
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -75,7 +79,9 @@ model Repo {
   syncOperations  SyncOperation[]
 
   @@unique([userId, fullName])
+  @@unique([userId, githubId])
   @@index([userId, enabled])
+  @@index([githubId])
   @@map("repos")
 }
 
@@ -89,7 +95,7 @@ model Artifact {
   repo        Repo     @relation(fields: [repoId], references: [id], onDelete: Cascade)
 
   // Source identification
-  githubId    Int      // PR number or commit SHA (as int for PRs)
+  githubId    String   // PR number or commit SHA string
   type        String   // "pr" or "commit"
   url         String
   branch      String?
@@ -135,6 +141,7 @@ model Candidate {
   // Sieve scoring
   sieveScore  Float    // 0.0 - 1.0
   scoreBreakdown Json  // { commitScore, prScore, diffScore, details }
+  risk        String?  // Risk level inferred during sieve (e.g., "high", "medium", "low")
 
   // Extraction state
   status      String   @default("pending") // pending, extracted, dismissed, failed
@@ -189,6 +196,9 @@ model Decision {
   // User who approved
   userId      String
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Soft delete
+  deletedAt   DateTime?
 
   // Timestamps
   createdAt   DateTime @default(now())

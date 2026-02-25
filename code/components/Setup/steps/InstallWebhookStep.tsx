@@ -8,6 +8,7 @@ import { useState } from 'react';
 import { Webhook, CheckCircle, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { ErrorState } from '@/components/ui/ErrorState';
+import { apiFetch } from '@/lib/apiFetch';
 import { logEvent } from '@/lib/debugLog';
 import type { WizardStepStatus, WebhookInstallResponse } from '@/types/app';
 
@@ -33,24 +34,17 @@ export function InstallWebhookStep({
         logEvent('install_webhook_start', { repoId });
 
         try {
-            const response = await fetch('/api/webhooks/install', {
+            const data = await apiFetch<WebhookInstallResponse>('/api/webhooks/install', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ repoId }),
+                body: { repoId },
             });
-
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.message || 'Failed to install webhook');
-            }
-
-            const data: WebhookInstallResponse = await response.json();
             setInstallResult(data);
             setStepStatus('success');
             logEvent('install_webhook_success', { status: data.status });
         } catch (error) {
-            setStepStatus('error', String(error));
-            logEvent('install_webhook_error', { error: String(error) });
+            const message = (error as { message?: string })?.message || String(error);
+            setStepStatus('error', message);
+            logEvent('install_webhook_error', { error: message });
         }
     };
 

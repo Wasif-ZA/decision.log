@@ -22,10 +22,13 @@ export type RepoAccessStatus = 'active' | 'revoked' | 'unknown';
 
 export interface Repo {
     id: string;
+    githubId?: number;
     name: string;
     fullName: string; // e.g. "owner/repo"
     defaultBranch: string;
     accessStatus: RepoAccessStatus;
+    enabled?: boolean;
+    private?: boolean;
 }
 
 // ─────────────────────────────────────────────
@@ -156,15 +159,22 @@ export interface WebhookInstallResponse {
 // Sync Responses
 // ─────────────────────────────────────────────
 
+export interface SyncRunResponse {
+    id: string;
+    status: string;
+    prsFetched: number;
+    candidatesCreated: number;
+    errorMessage: string | null;
+}
+
 export interface SyncStartResponse {
-    status: 'started' | 'already_running';
-    jobId: string;
+    success: boolean;
+    syncRun: SyncRunResponse | null;
 }
 
 export interface SyncStatusResponse {
-    status: SyncStatus;
-    progress?: number; // 0-100
-    error?: string;
+    hasSync: boolean;
+    syncRun: SyncRunResponse | null;
 }
 
 // ─────────────────────────────────────────────

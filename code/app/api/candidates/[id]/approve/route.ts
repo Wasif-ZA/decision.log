@@ -106,13 +106,13 @@ export async function POST(
       if (result.decisions.length === 0) {
         await db.candidate.update({
           where: { id: candidateId },
-          data: { status: 'failed' },
+          data: { status: 'pending' },
         })
 
         return NextResponse.json(
           {
             code: 'NO_DECISION',
-            message: 'No architectural decision found in this PR',
+            message: 'No architectural decision found in this PR. Candidate returned to pending.',
           },
           { status: 400 }
         )
@@ -160,10 +160,12 @@ export async function POST(
 
       return NextResponse.json({ decision })
     } catch (error) {
+      console.error('[approve] Extraction failed:', error)
+
       const { id: candidateId } = await params
       await db.candidate.updateMany({
         where: { id: candidateId, userId: user.id, status: 'extracting' },
-        data: { status: 'failed' },
+        data: { status: 'pending' },
       })
 
       const formatted = handleError(error)

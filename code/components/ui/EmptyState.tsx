@@ -88,3 +88,13 @@ export function NoRepoEmptyState({ onConnect }: { onConnect?: () => void }) {
     );
 }
 
+export function NotTrackedEmptyState({ onEnable }: { onEnable: () => void }) {
+    return (
+        <EmptyState
+            title="Repository not tracked"
+            description="This repository is not yet enabled for decision tracking."
+            action={{ label: 'Setup Repository', onClick: onEnable }}
+        />
+    );
+}
+

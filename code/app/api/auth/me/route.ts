@@ -73,6 +73,13 @@ export async function GET() {
         );
     }
 
+    // Fetch tracked repo IDs from DB (live, not from stale JWT)
+    const trackedRepos = await db.repo.findMany({
+        where: { userId: payload.sub, enabled: true },
+        select: { id: true },
+    });
+    const trackedRepoIds = trackedRepos.map((r) => r.id);
+
     const response: AuthMeResponse = {
         user: {
             id: payload.sub,
@@ -80,7 +87,7 @@ export async function GET() {
             avatarUrl: user.avatarUrl || '',
         },
         setupComplete: payload.setupComplete,
-        trackedRepoIds: payload.trackedRepoIds,
+        trackedRepoIds,
     };
 
     return NextResponse.json(response);

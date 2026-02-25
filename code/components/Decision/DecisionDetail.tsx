@@ -3,9 +3,10 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { ArrowLeft, ExternalLink } from "lucide-react";
+import { apiFetch } from "@/lib/apiFetch";
 import { LoadingSkeleton } from "@/components/ui/LoadingSkeleton";
 import { ErrorState } from "@/components/ui/ErrorState";
-import type { DecisionDetail as DecisionDetailType, DecisionResponse } from "@/types/app";
+import type { DecisionDetail as DecisionDetailType, DecisionResponse, ApiError } from "@/types/app";
 
 // ─────────────────────────────────────────────
 // Section Component
@@ -45,23 +46,20 @@ export default function DecisionDetail({ decisionId }: DecisionDetailProps) {
     const [decision, setDecision] = useState<DecisionDetailType | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [errorCode, setErrorCode] = useState<string | undefined>(undefined);
 
     const fetchDecision = async () => {
         setLoading(true);
         setError(null);
+        setErrorCode(undefined);
 
         try {
-            const response = await fetch(`/api/decisions/${decisionId}`);
-
-            if (!response.ok) {
-                const data = await response.json();
-                throw new Error(data.message || 'Failed to fetch decision');
-            }
-
-            const data: DecisionResponse = await response.json();
+            const data = await apiFetch<DecisionResponse>(`/api/decisions/${decisionId}`);
             setDecision(data.decision);
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'An error occurred');
+            const apiErr = err as ApiError;
+            setError(apiErr.message || 'An error occurred');
+            setErrorCode(apiErr.code);
         } finally {
             setLoading(false);
         }
@@ -96,6 +94,7 @@ export default function DecisionDetail({ decisionId }: DecisionDetailProps) {
                 <ErrorState
                     title="Failed to load decision"
                     message={error}
+                    errorCode={errorCode}
                     onRetry={fetchDecision}
                 />
             </div>

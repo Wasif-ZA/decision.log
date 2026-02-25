@@ -11,6 +11,10 @@
 import { SignJWT } from 'jose'
 import type { User, JWTPayload } from '@/types/app'
 import { FIXTURES } from '../fixtures'
+import { CSRF_COOKIE_NAME } from '@/lib/csrf'
+
+// Shared CSRF token for integration tests
+export const TEST_CSRF_TOKEN = 'test-csrf-token-for-integration-tests'
 
 // ============================================================================
 // JWT Helpers
@@ -137,7 +141,7 @@ export function errorResponse(
       error: {
         code,
         message,
-        ...(details && { details }),
+        ...(details != null ? { details } : {}),
       },
     },
   }

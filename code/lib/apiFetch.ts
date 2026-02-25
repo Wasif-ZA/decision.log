@@ -14,6 +14,57 @@ interface ApiFetchOptions extends Omit<RequestInit, 'body'> {
 }
 
 /**
+ * Guard against multiple concurrent 401 redirects
+ */
+let isRedirectingToLogin = false;
+
+/**
+ * CSRF token cache — fetched once per session
+ */
+let csrfToken: string | null = null;
+let csrfFetchPromise: Promise<string | null> | null = null;
+
+const MUTATION_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
+
+/**
+ * Fetch CSRF token from the server (cached, deduplicated)
+ */
+async function getCsrfToken(): Promise<string | null> {
+    if (csrfToken) return csrfToken;
+
+    // Deduplicate concurrent requests
+    if (csrfFetchPromise) return csrfFetchPromise;
+
+    csrfFetchPromise = (async () => {
+        try {
+            const response = await fetch('/api/auth/csrf');
+            if (response.ok) {
+                const data = await response.json();
+                csrfToken = data.token;
+                return csrfToken;
+            }
+        } catch {
+            // CSRF fetch failed — proceed without it
+            logEvent('csrf_fetch_error');
+        } finally {
+            csrfFetchPromise = null;
+        }
+        return null;
+    })();
+
+    return csrfFetchPromise;
+}
+
+/**
+ * Clear cached CSRF token (e.g., after logout)
+ */
+export function clearCsrfToken(): void {
+    csrfToken = null;
+    csrfFetchPromise = null;
+    isRedirectingToLogin = false;
+}
+
+/**
  * Sleep for a given number of milliseconds
  */
 function sleep(ms: number): Promise<void> {
@@ -21,11 +72,10 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Check if this is a repo access revocation error
+ * Check if the URL is a repo-related endpoint
  */
-function isRepoAccessRevoked(url: string, status: number): boolean {
-    const isRepoEndpoint = url.includes('/api/repos/') || url.includes('/api/sync/');
-    return isRepoEndpoint && (status === 403 || status === 404);
+function isRepoEndpoint(url: string): boolean {
+    return url.includes('/api/repos/') || url.includes('/api/sync/');
 }
 
 /**
@@ -69,12 +119,23 @@ export async function apiFetch<T>(
     } = options;
 
     // Prepare request
+    const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...(fetchOptions.headers as Record<string, string>),
+    };
+
+    // Attach CSRF token for mutation requests
+    const method = (fetchOptions.method || 'GET').toUpperCase();
+    if (MUTATION_METHODS.has(method)) {
+        const token = await getCsrfToken();
+        if (token) {
+            headers['X-CSRF-Token'] = token;
+        }
+    }
+
     const requestOptions: RequestInit = {
         ...fetchOptions,
-        headers: {
-            'Content-Type': 'application/json',
-            ...fetchOptions.headers,
-        },
+        headers,
         // No-cache for auth-related endpoints
         cache: url.includes('/api/auth/') || url.includes('/api/setup/') || url.includes('/api/diagnostics')
             ? 'no-store'
@@ -104,26 +165,52 @@ export async function apiFetch<T>(
             // Handle specific status codes
             const status = response.status;
 
-            // 401 Unauthorized - redirect to login
+            // 401 Unauthorized - redirect to login (deduplicated, skip if already on login)
             if (status === 401) {
                 logEvent('api_request_unauthorized', { url });
-                window.location.href = '/login?error=session_expired';
+                const isOnLoginPage = typeof window !== 'undefined' && window.location.pathname.startsWith('/login');
+                if (!isRedirectingToLogin && !isOnLoginPage) {
+                    isRedirectingToLogin = true;
+                    window.location.href = '/login?error=session_expired';
+                }
                 throw createApiError(ERROR_CODES.UNAUTHORIZED, 'Session expired. Please log in again.');
             }
 
-            // Repo access revoked (403/404 on repo endpoints)
-            if (isRepoAccessRevoked(url, status)) {
-                logEvent('api_request_repo_revoked', { url, status });
-                throw createApiError(
-                    ERROR_CODES.REPO_ACCESS_REVOKED,
-                    'Repository access has been revoked. Please re-authorize or select a different repository.'
-                );
-            }
-
-            // 403 Forbidden (other)
+            // 403 — check CSRF mismatch first, then repo access
             if (status === 403) {
+                const errorBody = await parseErrorBody(response);
+
+                // CSRF mismatch — clear cached token and retry once
+                if (errorBody.code === 'CSRF_MISMATCH' && attempt === 0) {
+                    logEvent('api_request_csrf_retry', { url });
+                    csrfToken = null;
+                    csrfFetchPromise = null;
+                    // Re-fetch CSRF token and attach to headers
+                    const newToken = await getCsrfToken();
+                    if (newToken) {
+                        (requestOptions.headers as Record<string, string>)['X-CSRF-Token'] = newToken;
+                    }
+                    attempt++;
+                    continue;
+                }
+
+                if (errorBody.code === 'CSRF_MISMATCH') {
+                    logEvent('api_request_csrf_failed', { url });
+                    throw errorBody;
+                }
+
+                // Repo access revoked (server explicitly says so, or GitHub 403 on repo endpoint)
+                if (isRepoEndpoint(url) && (errorBody.code === ERROR_CODES.REPO_ACCESS_REVOKED || errorBody.code === ERROR_CODES.FORBIDDEN)) {
+                    logEvent('api_request_repo_revoked', { url, status });
+                    throw createApiError(
+                        ERROR_CODES.REPO_ACCESS_REVOKED,
+                        'Repository access has been revoked. Please re-authorize or select a different repository.'
+                    );
+                }
+
+                // 403 Forbidden (other)
                 logEvent('api_request_forbidden', { url });
-                throw createApiError(ERROR_CODES.FORBIDDEN, 'You do not have permission to access this resource.');
+                throw errorBody;
             }
 
             // 429 Rate Limited - exponential backoff

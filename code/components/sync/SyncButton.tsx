@@ -4,9 +4,10 @@
 // Sync Button Component
 // ===========================================
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { RefreshCw, Check, AlertCircle, Loader2 } from 'lucide-react';
 import { useToast } from '@/components/ui/Toast';
+import { apiFetch } from '@/lib/apiFetch';
 
 interface SyncButtonProps {
     repoId: string;
@@ -14,6 +15,14 @@ interface SyncButtonProps {
 }
 
 type SyncStatus = 'idle' | 'pending' | 'fetching' | 'sieving' | 'extracting' | 'complete' | 'failed';
+
+interface SyncRun {
+    id: string;
+    status: string;
+    prsFetched: number;
+    candidatesCreated: number;
+    errorMessage: string | null;
+}
 
 interface SyncState {
     status: SyncStatus;
@@ -30,6 +39,15 @@ export function SyncButton({ repoId, onSyncComplete }: SyncButtonProps) {
     const { warning } = useToast();
     const isDemoMode = process.env.NEXT_PUBLIC_DEMO_MODE === 'true';
     const [polling, setPolling] = useState(false);
+    const mountedRef = useRef(true);
+
+    // Clean up on unmount
+    useEffect(() => {
+        mountedRef.current = true;
+        return () => {
+            mountedRef.current = false;
+        };
+    }, []);
 
     // Poll for sync status while in progress
     useEffect(() => {
@@ -37,16 +55,21 @@ export function SyncButton({ repoId, onSyncComplete }: SyncButtonProps) {
 
         const pollInterval = setInterval(async () => {
             try {
+                // Use raw fetch for polling to avoid apiFetch retry logic
                 const response = await fetch(`/api/repos/${repoId}/sync`);
+                if (!response.ok) return;
+
                 const data = await response.json();
 
+                if (!mountedRef.current) return;
+
                 if (data.hasSync && data.syncRun) {
-                    const { status, prsFetched, candidatesCreated, errorMessage } = data.syncRun;
+                    const { status, prsFetched, candidatesCreated, errorMessage } = data.syncRun as SyncRun;
 
                     setSyncState({
-                        status,
+                        status: status as SyncStatus,
                         syncRunId: data.syncRun.id,
-                        error: errorMessage,
+                        error: errorMessage || undefined,
                         stats: { prsFetched, candidatesCreated },
                     });
 
@@ -74,28 +97,39 @@ export function SyncButton({ repoId, onSyncComplete }: SyncButtonProps) {
         setSyncState({ status: 'pending' });
 
         try {
-            const response = await fetch(`/api/repos/${repoId}/sync`, {
+            const data = await apiFetch<{ success: boolean; syncRun: SyncRun | null }>(`/api/repos/${repoId}/sync`, {
                 method: 'POST',
             });
 
-            const data = await response.json();
+            if (!mountedRef.current) return;
 
-            if (data.success) {
+            if (data.success && data.syncRun) {
                 setSyncState({
-                    status: data.syncRun.status,
+                    status: data.syncRun.status as SyncStatus,
                     syncRunId: data.syncRun.id,
+                    stats: {
+                        prsFetched: data.syncRun.prsFetched,
+                        candidatesCreated: data.syncRun.candidatesCreated,
+                    },
                 });
-                setPolling(true);
+
+                // If sync completed synchronously (which it does currently)
+                if (data.syncRun.status === 'complete') {
+                    onSyncComplete?.();
+                } else {
+                    setPolling(true);
+                }
             } else {
                 setSyncState({
                     status: 'failed',
-                    error: data.error?.message || 'Failed to start sync',
+                    error: 'Failed to start sync',
                 });
             }
         } catch (error) {
+            if (!mountedRef.current) return;
             setSyncState({
                 status: 'failed',
-                error: error instanceof Error ? error.message : 'Failed to start sync',
+                error: error instanceof Error ? error.message : (error as { message?: string })?.message || 'Failed to start sync',
             });
         }
     };

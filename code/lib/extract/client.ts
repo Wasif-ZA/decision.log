@@ -86,11 +86,31 @@ export async function suggestConsequences(
 }
 
 /**
+ * Helper to robustly parse JSON from LLM responses
+ * Handles markdown code blocks and leading/trailing whitespace
+ */
+function tryParseJSON(text: string): any {
+  let cleaned = text.trim()
+
+  // Remove markdown code blocks if present
+  if (cleaned.startsWith('```')) {
+    cleaned = cleaned.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
+  }
+
+  try {
+    return JSON.parse(cleaned)
+  } catch (error) {
+    console.error('JSON Parse Error. Original text:', text)
+    throw error
+  }
+}
+
+/**
  * Extract decisions using Claude Sonnet 4 (primary)
  */
 async function extractWithClaude(
   artifacts: Array<{
-    number: number
+    number: number | string
     title: string
     body: string | null
     diff: string | null
@@ -134,14 +154,16 @@ async function extractWithClaude(
 
   let parsed: { decisions: unknown[] }
   try {
-    parsed = JSON.parse(textContent.text)
+    parsed = tryParseJSON(textContent.text)
   } catch {
     throw new ExtractionError('Failed to parse JSON from Claude response')
   }
 
   // Validate each decision
   const decisions: DecisionExtraction[] = []
-  for (const decision of parsed.decisions) {
+  const decisionsToValidate = Array.isArray(parsed?.decisions) ? parsed.decisions : []
+  
+  for (const decision of decisionsToValidate) {
     try {
       const validated = DecisionExtractionSchema.parse(decision)
       decisions.push(validated)
@@ -169,7 +191,7 @@ async function extractWithClaude(
  */
 async function extractWithGPT4o(
   artifacts: Array<{
-    number: number
+    number: number | string
     title: string
     body: string | null
     diff: string | null
@@ -211,14 +233,16 @@ async function extractWithGPT4o(
 
   let parsed: { decisions: unknown[] }
   try {
-    parsed = JSON.parse(content)
+    parsed = tryParseJSON(content)
   } catch {
     throw new ExtractionError('Failed to parse JSON from GPT-4o response')
   }
 
   // Validate each decision
   const decisions: DecisionExtraction[] = []
-  for (const decision of parsed.decisions) {
+  const decisionsToValidate = Array.isArray(parsed?.decisions) ? parsed.decisions : []
+
+  for (const decision of decisionsToValidate) {
     try {
       const validated = DecisionExtractionSchema.parse(decision)
       decisions.push(validated)
@@ -248,7 +272,7 @@ async function extractWithGPT4o(
  */
 export async function extractDecisions(
   artifacts: Array<{
-    number: number
+    number: number | string
     title: string
     body: string | null
     diff: string | null

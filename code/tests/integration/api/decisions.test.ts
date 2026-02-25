@@ -13,8 +13,10 @@ import { FIXTURES } from '../../fixtures'
 import { GET as getDecision, PATCH as updateDecision } from '@/app/api/decisions/[id]/route'
 import { POST as suggestConsequences } from '@/app/api/decisions/[id]/suggest/route'
 import { SESSION_COOKIE_NAME } from '@/lib/jwt'
+import { CSRF_COOKIE_NAME } from '@/lib/csrf'
 import { db } from '@/lib/db'
 import { NextRequest } from 'next/server'
+import { TEST_CSRF_TOKEN } from '../../utils/helpers'
 
 // Mock next/headers
 vi.mock('next/headers', () => ({
@@ -113,9 +115,11 @@ describe('Decisions API', () => {
 
       const req = new NextRequest('http://localhost:3000/api/decisions/123', {
         method: 'PATCH',
+        headers: { 'x-csrf-token': TEST_CSRF_TOKEN },
         body: JSON.stringify({ title: 'Updated Title' }),
       })
       req.cookies.set(SESSION_COOKIE_NAME, token)
+      req.cookies.set(CSRF_COOKIE_NAME, TEST_CSRF_TOKEN)
 
       // Act
       const response = await updateDecision(
@@ -142,8 +146,10 @@ describe('Decisions API', () => {
 
       const req = new NextRequest('http://localhost:3000/api/decisions/123/suggest', {
         method: 'POST',
+        headers: { 'x-csrf-token': TEST_CSRF_TOKEN },
       })
       req.cookies.set(SESSION_COOKIE_NAME, token)
+      req.cookies.set(CSRF_COOKIE_NAME, TEST_CSRF_TOKEN)
 
       // Act
       const response = await suggestConsequences(

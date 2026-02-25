@@ -10,6 +10,7 @@ import { generateWebhookSecret, storeWebhookSecret, hasWebhookSecret } from '@/l
 import { handleError } from '@/lib/errors';
 import { validateBody } from '@/lib/validation';
 import type { WebhookInstallResponse } from '@/types/app';
+import { blockDemoWrites } from '@/lib/demoWriteGuard';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,6 +20,9 @@ const InstallWebhookSchema = z.object({
 
 export const POST = requireAuth(async (request, { user }) => {
     try {
+        const demoBlock = blockDemoWrites(user.login);
+        if (demoBlock) return demoBlock;
+
         const { repoId } = await validateBody(request, InstallWebhookSchema);
         await requireRepoAccessByIdentifier(user.id, repoId);
 

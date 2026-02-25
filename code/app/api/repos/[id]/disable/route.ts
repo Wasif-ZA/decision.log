@@ -7,9 +7,10 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/auth/requireAuth'
-import { requireRepoAccess } from '@/lib/auth/requireRepoAccess'
+import { requireRepoAccessByIdentifier } from '@/lib/auth/requireRepoAccess'
 import { handleError } from '@/lib/errors'
 import { db } from '@/lib/db'
+import { blockDemoWrites } from '@/lib/demoWriteGuard'
 
 export async function POST(
   req: NextRequest,
@@ -17,13 +18,16 @@ export async function POST(
 ) {
   return requireAuth(async (request, { user }) => {
     try {
-      const { id: repoId } = await params
-      await requireRepoAccess(user.id, repoId)
+      const demoBlock = blockDemoWrites(user.login)
+      if (demoBlock) return demoBlock
+
+      const { id: repoIdentifier } = await params
+      const repo = await requireRepoAccessByIdentifier(user.id, repoIdentifier)
 
       // Update repo
-      const repo = await db.repo.update({
+      const updatedRepo = await db.repo.update({
         where: {
-          id: repoId,
+          id: repo.id,
         },
         data: {
           enabled: false,
@@ -33,9 +37,9 @@ export async function POST(
       return NextResponse.json({
         success: true,
         repo: {
-          id: repo.id,
-          fullName: repo.fullName,
-          enabled: repo.enabled,
+          id: updatedRepo.id,
+          fullName: updatedRepo.fullName,
+          enabled: updatedRepo.enabled,
         },
       })
     } catch (error) {

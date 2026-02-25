@@ -2,12 +2,15 @@
 // Error State Component
 // ===========================================
 
-import { AlertCircle, RefreshCw } from 'lucide-react';
+import { AlertCircle, RefreshCw, LogIn } from 'lucide-react';
+import Link from 'next/link';
 import { Button } from './Button';
 
 interface ErrorStateProps {
     title?: string;
     message: string;
+    errorCode?: string;
+    retryAfter?: number;
     onRetry?: () => void;
     className?: string;
 }
@@ -15,9 +18,28 @@ interface ErrorStateProps {
 export function ErrorState({
     title = 'Something went wrong',
     message,
+    errorCode,
+    retryAfter,
     onRetry,
     className = '',
 }: ErrorStateProps) {
+    // Auto-enhance title/message based on error code
+    const resolvedTitle = errorCode === 'RATE_LIMITED' ? 'Rate Limited'
+        : errorCode === 'UNAUTHORIZED' ? 'Session Expired'
+            : errorCode === 'GITHUB_TOKEN_INVALID' ? 'GitHub Token Expired'
+                : errorCode === 'REPO_ACCESS_REVOKED' ? 'Repository Access Revoked'
+                    : title;
+
+    const resolvedMessage = errorCode === 'RATE_LIMITED' && retryAfter
+        ? `You've been rate limited. Please try again in ${Math.ceil(retryAfter / 1000)} seconds.`
+        : errorCode === 'UNAUTHORIZED'
+            ? 'Your session has expired. Please sign in again to continue.'
+            : errorCode === 'GITHUB_TOKEN_INVALID'
+                ? 'Your GitHub token has expired. Please sign in again to re-authorize.'
+                : errorCode === 'REPO_ACCESS_REVOKED'
+                    ? 'Your access to this repository has been revoked. Please re-authorize or select a different repository.'
+                    : message;
+
     return (
         <div
             className={`
@@ -36,17 +58,27 @@ export function ErrorState({
                 </div>
             </div>
             <h3 className="text-lg font-semibold text-base-900 mb-2">
-                {title}
+                {resolvedTitle}
             </h3>
             <p className="text-sm text-base-500 max-w-md mb-8 leading-relaxed">
-                {message}
+                {resolvedMessage}
             </p>
-            {onRetry && (
-                <Button onClick={onRetry} variant="secondary" className="gap-2">
-                    <RefreshCw className="w-4 h-4" />
-                    Try Again
-                </Button>
-            )}
+            <div className="flex gap-3">
+                {(errorCode === 'UNAUTHORIZED' || errorCode === 'GITHUB_TOKEN_INVALID') && (
+                    <Link href="/login">
+                        <Button variant="primary" className="gap-2">
+                            <LogIn className="w-4 h-4" />
+                            Sign In
+                        </Button>
+                    </Link>
+                )}
+                {onRetry && (
+                    <Button onClick={onRetry} variant="secondary" className="gap-2">
+                        <RefreshCw className="w-4 h-4" />
+                        Try Again
+                    </Button>
+                )}
+            </div>
         </div>
     );
 }

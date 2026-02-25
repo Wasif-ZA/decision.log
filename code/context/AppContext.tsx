@@ -7,6 +7,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
 import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import { logEvent } from '@/lib/debugLog';
+import { apiFetch, clearCsrfToken } from '@/lib/apiFetch';
 import type { AppState, User, Repo, SessionStatus, SyncStatus, AuthMeResponse } from '@/types/app';
 
 // ─────────────────────────────────────────────
@@ -147,19 +148,7 @@ export function AppProvider({ children }: AppProviderProps) {
             setSessionStatus('loading');
             logEvent('session_refresh_start');
 
-            const response = await fetch('/api/auth/me', { cache: 'no-store' });
-
-            if (!response.ok) {
-                if (response.status === 401) {
-                    setSessionStatus('unauthenticated');
-                    setUser(null);
-                    logEvent('session_refresh_unauthenticated');
-                    return;
-                }
-                throw new Error('Failed to fetch session');
-            }
-
-            const data: AuthMeResponse = await response.json();
+            const data: AuthMeResponse = await apiFetch('/api/auth/me');
 
             setUser(data.user);
             setSetupComplete(data.setupComplete);
@@ -167,6 +156,14 @@ export function AppProvider({ children }: AppProviderProps) {
             setSessionStatus('authenticated');
 
             logEvent('session_refresh_success', { userId: data.user.id, setupComplete: data.setupComplete });
+
+            // Fetch available repos after auth succeeds
+            try {
+                const reposData = await apiFetch<{ repos: Repo[] }>('/api/repos');
+                setAvailableRepos(reposData.repos);
+            } catch (repoErr) {
+                logEvent('repos_fetch_error', { error: String(repoErr) });
+            }
         } catch (error) {
             logEvent('session_refresh_error', { error: String(error) });
             setSessionStatus('unauthenticated');
@@ -177,13 +174,19 @@ export function AppProvider({ children }: AppProviderProps) {
     const logout = useCallback(async () => {
         try {
             logEvent('logout_start');
-            await fetch('/api/auth/logout', { method: 'POST' });
+            await apiFetch('/api/auth/logout', { method: 'POST' });
+            clearCsrfToken();
             setUser(null);
             setSessionStatus('unauthenticated');
             router.push('/login');
             logEvent('logout_success');
         } catch (error) {
             logEvent('logout_error', { error: String(error) });
+            // Still clear local state even if logout request fails
+            clearCsrfToken();
+            setUser(null);
+            setSessionStatus('unauthenticated');
+            router.push('/login');
         }
     }, [router]);
 
@@ -203,8 +206,22 @@ export function AppProvider({ children }: AppProviderProps) {
         setSelectedRepoIdState(repoId);
         // Reset branch when repo changes
         setSelectedBranchState(null);
+        setAvailableBranches([]);
         updateURL(repoId, null, dateRange.from, dateRange.to);
         logEvent('repo_selected', { repoId });
+
+        // Fetch branches for the newly selected repo
+        if (repoId) {
+            apiFetch<{ branches: string[] }>(`/api/repos/${repoId}/branches`)
+                .then((data) => {
+                    setAvailableBranches(data.branches);
+                })
+                .catch((err) => {
+                    logEvent('branches_fetch_error', { error: String(err) });
+                    // Clear branches if repo not found or other error
+                    setAvailableBranches([]);
+                });
+        }
     }, [dateRange, updateURL]);
 
     const setSelectedBranch = useCallback((branch: string | null) => {
