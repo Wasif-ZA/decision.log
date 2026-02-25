@@ -87,7 +87,7 @@ export async function suggestConsequences(
 
 /**
  * Helper to robustly parse JSON from LLM responses
- * Handles markdown code blocks and leading/trailing whitespace
+ * Handles markdown code blocks, preamble text, and trailing content
  */
 function tryParseJSON(text: string): any {
   let cleaned = text.trim()
@@ -97,12 +97,25 @@ function tryParseJSON(text: string): any {
     cleaned = cleaned.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
   }
 
+  // Try direct parse first (fastest path)
   try {
     return JSON.parse(cleaned)
-  } catch (error) {
-    console.error('JSON Parse Error. Original text:', text)
-    throw error
+  } catch {
+    // Fall through to regex extraction
   }
+
+  // Extract the first JSON object from preamble/trailing text
+  const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
+  if (jsonMatch) {
+    try {
+      return JSON.parse(jsonMatch[0])
+    } catch {
+      // Fall through to error
+    }
+  }
+
+  console.error('JSON Parse Error. Original text:', text.slice(0, 500))
+  throw new ExtractionError('Failed to extract valid JSON from LLM response')
 }
 
 /**
@@ -162,7 +175,7 @@ async function extractWithClaude(
   // Validate each decision
   const decisions: DecisionExtraction[] = []
   const decisionsToValidate = Array.isArray(parsed?.decisions) ? parsed.decisions : []
-  
+
   for (const decision of decisionsToValidate) {
     try {
       const validated = DecisionExtractionSchema.parse(decision)

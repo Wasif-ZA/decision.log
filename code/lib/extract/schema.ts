@@ -131,7 +131,7 @@ Output format: Return ONLY a raw JSON object matching the DecisionExtraction sch
  * User prompt template for extraction
  */
 export function createExtractionPrompt(artifacts: Array<{
-  number: number
+  number: number | string
   title: string
   body: string | null
   diff: string | null

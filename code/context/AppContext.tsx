@@ -105,16 +105,18 @@ export function AppProvider({ children }: AppProviderProps) {
         const fromParam = searchParams.get('from');
         const toParam = searchParams.get('to');
 
-        if (repoParam) setSelectedRepoIdState(repoParam);
-        if (branchParam) setSelectedBranchState(branchParam);
+        if (repoParam && repoParam !== selectedRepoId) setSelectedRepoIdState(repoParam);
+        if (branchParam && branchParam !== selectedBranch) setSelectedBranchState(branchParam);
 
-        setDateRangeState({
-            from: parseISODate(fromParam),
-            to: parseISODate(toParam),
-        });
+        const parsedFrom = parseISODate(fromParam);
+        const parsedTo = parseISODate(toParam);
+        if (parsedFrom !== dateRange.from || parsedTo !== dateRange.to) {
+            setDateRangeState({ from: parsedFrom, to: parsedTo });
+        }
 
         logEvent('app_context_hydrated', { repoParam, branchParam, fromParam, toParam });
-    }, []); // Only on mount
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [searchParams]);
 
     // ─────────────────────────────────────────────
     // Update URL when selections change

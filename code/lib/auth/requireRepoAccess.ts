@@ -76,15 +76,16 @@ export async function requireEnabledRepo(
     return repo;
 }
 
-function parseGitHubRepoId(value: string): number | null {
+function parseGitHubRepoId(value: string): bigint | null {
     if (!/^\d+$/.test(value)) {
         return null;
     }
 
-    const parsed = Number(value);
-    if (!Number.isSafeInteger(parsed) || parsed <= 0 || parsed > 2147483647) {
+    try {
+        const parsed = BigInt(value);
+        if (parsed <= 0n) return null;
+        return parsed;
+    } catch {
         return null;
     }
-
-    return parsed;
 }

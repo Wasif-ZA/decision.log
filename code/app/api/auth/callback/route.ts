@@ -89,9 +89,9 @@ export async function GET(request: Request) {
 
         // Create or update user in database
         const user = await db.user.upsert({
-            where: { githubId: userData.id },
+            where: { githubId: BigInt(userData.id) },
             create: {
-                githubId: userData.id,
+                githubId: BigInt(userData.id),
                 login: userData.login,
                 name: userData.name,
                 email: userData.email,
@@ -107,17 +107,17 @@ export async function GET(request: Request) {
                 githubTokenEncrypted: encrypted,
                 githubTokenIv: iv,
             },
-            include: {
-                repos: {
-                    where: { enabled: true },
-                    select: { id: true },
-                },
-            },
+        });
+
+        // Fetch enabled repos separately for proper typing
+        const enabledRepos = await db.repo.findMany({
+            where: { userId: user.id, enabled: true },
+            select: { id: true },
         });
 
         // Check if this is a new user (no enabled repos)
-        const isNewUser = user.repos.length === 0;
-        const trackedRepoIds = user.repos.map((r: any) => r.id);
+        const isNewUser = enabledRepos.length === 0;
+        const trackedRepoIds = enabledRepos.map((r) => r.id);
 
         // Sign JWT
         const jwt = await signJWT({

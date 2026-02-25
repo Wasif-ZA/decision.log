@@ -69,13 +69,13 @@ export const GET = requireAuth(async (req, { user }) => {
         });
 
         const dbRepoByGithubId = new Map(
-            dbRepos.map((r) => [r.githubId, r])
+            dbRepos.map((r) => [Number(r.githubId), r])
         );
 
         // Transform to our Repo format
         // Use internal CUID if the repo is tracked in DB, otherwise use GitHub ID
         const repos: Repo[] = githubRepos.map((repo) => {
-            const tracked = dbRepoByGithubId.get(repo.id);
+            const tracked = dbRepoByGithubId.get(Number(repo.id));
             return {
                 id: tracked ? tracked.id : String(repo.id),
                 githubId: repo.id,

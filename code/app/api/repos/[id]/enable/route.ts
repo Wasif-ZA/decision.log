@@ -97,7 +97,7 @@ export async function POST(
           },
         },
         create: {
-          githubId: githubRepo.id,
+          githubId: BigInt(githubRepo.id),
           owner,
           name: repoName,
           fullName: fullName,
