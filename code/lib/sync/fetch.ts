@@ -44,17 +44,34 @@ export async function fetchPullRequests(
       // This is simpler than trying to paginate from a specific PR
     }
 
-    // Fetch PRs from GitHub
-    const prs = await client.fetchPullRequests(options.owner, options.repo, {
-      state: 'closed', // Only closed/merged PRs
-      sort: 'updated',
-      direction: 'desc',
-      per_page: Math.min(options.limit ?? 50, 100),
-      since: sinceDate,
-    })
+    // Fetch PRs from GitHub with pagination
+    const maxPRs = options.limit ?? 50
+    const perPage = Math.min(maxPRs, 100)
+    let allPRs: GitHubPullRequest[] = []
+    let page = 1
+
+    while (allPRs.length < maxPRs) {
+      const prs = await client.fetchPullRequests(options.owner, options.repo, {
+        state: 'closed', // Only closed/merged PRs
+        sort: 'updated',
+        direction: 'desc',
+        per_page: perPage,
+        page,
+        since: sinceDate,
+      })
+
+      allPRs = allPRs.concat(prs)
+
+      // Stop if last page (fewer results than requested) or hit limit
+      if (prs.length < perPage) break
+      page++
+    }
+
+    // Trim to limit
+    allPRs = allPRs.slice(0, maxPRs)
 
     // Filter merged PRs only
-    const mergedPRs = prs.filter((pr) => pr.merged_at !== null)
+    const mergedPRs = allPRs.filter((pr) => pr.merged_at !== null)
 
     // Store each PR as an artifact
     for (const pr of mergedPRs) {
@@ -116,12 +133,15 @@ export async function fetchPullRequests(
       }
     }
 
-    // Create new cursor
+    // Only advance cursor if all PRs were stored successfully
     let newCursor: string | null = null
 
-    if (mergedPRs.length > 0) {
+    if (mergedPRs.length > 0 && errors.length === 0) {
       const latestPR = mergedPRs[0] // Already sorted by updated DESC
       newCursor = createPRCursor(latestPR.number)
+    } else if (errors.length > 0) {
+      // Partial failure: keep existing cursor so failed PRs are retried
+      newCursor = options.cursor ?? null
     }
 
     return {

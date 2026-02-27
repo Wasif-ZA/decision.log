@@ -32,8 +32,8 @@ export async function GET(
       const { id: decisionId } = await params
 
       // Get decision
-      const decision = await db.decision.findUnique({
-        where: { id: decisionId },
+      const decision = await db.decision.findFirst({
+        where: { id: decisionId, deletedAt: null },
         include: {
           candidate: {
             include: {
@@ -91,8 +91,8 @@ export async function PATCH(
       const body = await validateBody(request, UpdateDecisionSchema)
 
       // Validate decision exists and belongs to user
-      const existing = await db.decision.findUnique({
-        where: { id: decisionId },
+      const existing = await db.decision.findFirst({
+        where: { id: decisionId, deletedAt: null },
       })
 
       if (!existing) {

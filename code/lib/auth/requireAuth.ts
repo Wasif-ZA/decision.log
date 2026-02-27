@@ -6,7 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyJWT, SESSION_COOKIE_NAME } from '@/lib/jwt'
+import { verifyJWT, shouldRenewToken, renewJWT, getSessionCookieOptions, SESSION_COOKIE_NAME } from '@/lib/jwt'
 import { db, type User } from '@/lib/db'
 import { UnauthorizedError, handleError } from '@/lib/errors'
 import { DEMO_LOGIN, isDemoModeEnabled } from '@/lib/demoMode'
@@ -88,7 +88,24 @@ export function requireAuth<T extends AuthContext>(
       }
 
       // Call handler with authenticated context
-      return await handler(req, context as T)
+      const response = await handler(req, context as T)
+
+      // Transparently renew JWT if within 1 day of expiry
+      if (shouldRenewToken(payload)) {
+        try {
+          const newToken = await renewJWT(payload)
+          const isProduction = process.env.NODE_ENV === 'production'
+          const cookieOptions = getSessionCookieOptions(isProduction)
+          response.headers.set(
+            'Set-Cookie',
+            `${SESSION_COOKIE_NAME}=${newToken}; Path=${cookieOptions.path}; Max-Age=${cookieOptions.maxAge}; SameSite=${cookieOptions.sameSite}${cookieOptions.httpOnly ? '; HttpOnly' : ''}${cookieOptions.secure ? '; Secure' : ''}`
+          )
+        } catch {
+          // Non-fatal: token renewal failure shouldn't break the request
+        }
+      }
+
+      return response
     } catch (error) {
       const formatted = handleError(error)
 

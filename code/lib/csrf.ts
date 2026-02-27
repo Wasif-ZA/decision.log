@@ -11,7 +11,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { randomBytes } from 'crypto'
+import { randomBytes, timingSafeEqual } from 'crypto'
 
 export const CSRF_COOKIE_NAME = 'csrf_token'
 export const CSRF_HEADER_NAME = 'x-csrf-token'
@@ -41,7 +41,10 @@ export function validateCsrf(req: NextRequest): NextResponse | null {
     )
   }
 
-  if (cookieToken !== headerToken) {
+  if (
+    cookieToken.length !== headerToken.length ||
+    !timingSafeEqual(Buffer.from(cookieToken), Buffer.from(headerToken))
+  ) {
     return NextResponse.json(
       {
         code: 'CSRF_MISMATCH',

@@ -28,11 +28,11 @@ export async function checkExtractionLimit(
   allowed: boolean
   stats: CostStats
 }> {
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-
-  const tomorrow = new Date(today)
-  tomorrow.setDate(tomorrow.getDate() + 1)
+  const now = new Date()
+  const todayStr = now.toISOString().slice(0, 10) // YYYY-MM-DD in UTC
+  const today = new Date(todayStr + 'T00:00:00.000Z')
+  const tomorrow = new Date(todayStr + 'T00:00:00.000Z')
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1)
 
   // Get today's extractions
   const todayExtractions = await db.extractionCost.findMany({
@@ -116,6 +116,7 @@ export async function getCostStats(repoId: string): Promise<CostStats> {
 
 /**
  * Get cost stats for a user (across all repos)
+ * Uses aggregate/groupBy to avoid loading all records into memory
  */
 export async function getUserCostStats(userId: string): Promise<{
   totalCost: number
@@ -127,47 +128,50 @@ export async function getUserCostStats(userId: string): Promise<{
     extractions: number
   }>
 }> {
-  const costs = await db.extractionCost.findMany({
+  // Aggregate totals at database level
+  const totals = await db.extractionCost.aggregate({
     where: { userId },
-    include: {
-      repo: {
-        select: {
-          id: true,
-          fullName: true,
-        },
-      },
+    _sum: {
+      totalCost: true,
+      batchSize: true,
     },
   })
 
-  const totalCost = costs.reduce((sum: number, c: any) => sum + c.totalCost, 0)
-  const totalExtractions = costs.reduce((sum: number, c: any) => sum + c.batchSize, 0)
+  const totalCost = totals._sum.totalCost ?? 0
+  const totalExtractions = totals._sum.batchSize ?? 0
 
-  // Group by repo
-  const repoMap = new Map<
-    string,
-    { repoId: string; repoName: string; cost: number; extractions: number }
-  >()
+  // Group by repo at database level
+  const grouped = await db.extractionCost.groupBy({
+    by: ['repoId'],
+    where: { userId },
+    _sum: {
+      totalCost: true,
+      batchSize: true,
+    },
+  })
 
-  for (const cost of costs) {
-    const existing = repoMap.get(cost.repoId)
-
-    if (existing) {
-      existing.cost += cost.totalCost
-      existing.extractions += cost.batchSize
-    } else {
-      repoMap.set(cost.repoId, {
-        repoId: cost.repoId,
-        repoName: cost.repo.fullName,
-        cost: cost.totalCost,
-        extractions: cost.batchSize,
+  // Fetch repo names for the grouped results
+  const repoIds = grouped.map((g) => g.repoId)
+  const repos = repoIds.length > 0
+    ? await db.repo.findMany({
+        where: { id: { in: repoIds } },
+        select: { id: true, fullName: true },
       })
-    }
-  }
+    : []
+
+  const repoNameMap = new Map(repos.map((r) => [r.id, r.fullName]))
+
+  const repoBreakdown = grouped.map((g) => ({
+    repoId: g.repoId,
+    repoName: repoNameMap.get(g.repoId) ?? 'Unknown',
+    cost: g._sum.totalCost ?? 0,
+    extractions: g._sum.batchSize ?? 0,
+  }))
 
   return {
     totalCost,
     totalExtractions,
-    repoBreakdown: Array.from(repoMap.values()),
+    repoBreakdown,
   }
 }
 

@@ -11,6 +11,7 @@ import { scoreArtifact } from '@/lib/sieve/scorer'
 import { logError, DatabaseError } from '@/lib/errors'
 
 const SIEVE_THRESHOLD = 0.4 // Minimum score to create candidate
+const STALE_EXTRACTION_TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes
 
 export interface SyncResult {
   success: boolean
@@ -59,6 +60,16 @@ export async function syncRepository(
   }
 
   try {
+    // Reset candidates stuck in 'extracting' due to server crashes
+    await db.candidate.updateMany({
+      where: {
+        repoId,
+        status: 'extracting',
+        updatedAt: { lt: new Date(Date.now() - STALE_EXTRACTION_TIMEOUT_MS) },
+      },
+      data: { status: 'pending' },
+    })
+
     // Start sync operation
     const syncOp = await db.syncOperation.create({
       data: {
@@ -179,19 +190,24 @@ export async function syncRepository(
   } catch (error) {
     logError(error, 'Sync failed')
 
-    // Update sync operation with error
+    // Update sync operation with error (don't let this block lock release)
     if (syncOpId) {
-      await db.syncOperation.update({
-        where: { id: syncOpId },
-        data: {
-          status: 'error',
-          completedAt: new Date(),
-          errorCount: errors.length + 1,
-          errorMessage: error instanceof Error ? error.message : 'Unknown error',
-        },
-      })
+      try {
+        await db.syncOperation.update({
+          where: { id: syncOpId },
+          data: {
+            status: 'error',
+            completedAt: new Date(),
+            errorCount: errors.length + 1,
+            errorMessage: error instanceof Error ? error.message : 'Unknown error',
+          },
+        })
+      } catch (syncOpError) {
+        logError(syncOpError, 'Failed to update sync operation status')
+      }
     }
 
+    // Always release sync lock, even if sync operation update failed
     await db.repo.updateMany({
       where: {
         id: repoId,

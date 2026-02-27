@@ -24,14 +24,14 @@ export const POST = requireAuth(async (request, { user }) => {
         if (demoBlock) return demoBlock;
 
         const { repoId } = await validateBody(request, InstallWebhookSchema);
-        await requireRepoAccessByIdentifier(user.id, repoId);
+        const repo = await requireRepoAccessByIdentifier(user.id, repoId);
 
-        const alreadyInstalled = await hasWebhookSecret(repoId);
+        const alreadyInstalled = await hasWebhookSecret(repo.id);
 
         if (alreadyInstalled) {
             const response: WebhookInstallResponse = {
                 status: 'already_installed',
-                webhookId: `webhook-${repoId}`,
+                webhookId: `webhook-${repo.id}`,
             };
             return NextResponse.json(response);
         }
@@ -39,11 +39,11 @@ export const POST = requireAuth(async (request, { user }) => {
         // MVP Stub: Generate and store webhook secret
         // In production: Call GitHub API to create webhook with this secret
         const secret = generateWebhookSecret();
-        await storeWebhookSecret(repoId, secret);
+        await storeWebhookSecret(repo.id, secret);
 
         const response: WebhookInstallResponse = {
             status: 'installed',
-            webhookId: `webhook-${repoId}`,
+            webhookId: `webhook-${repo.id}`,
         };
 
         return NextResponse.json(response);

@@ -28,7 +28,9 @@ export async function GET(request: Request) {
     // Handle error from GitHub
     if (error) {
         console.error('GitHub OAuth error:', error, errorDescription);
-        return NextResponse.redirect(new URL(`/login?error=${error}`, request.url));
+        const loginUrl = new URL('/login', request.url);
+        loginUrl.searchParams.set('error', 'oauth_denied');
+        return NextResponse.redirect(loginUrl);
     }
 
     // Validate state (CSRF protection)

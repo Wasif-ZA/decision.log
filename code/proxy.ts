@@ -36,14 +36,14 @@ export async function proxy(request: NextRequest) {
 
     // Demo mode allows anonymous browsing of protected pages.
     if (isDemoModeEnabled && !hasSession) {
-        return NextResponse.next();
+        return addSecurityHeaders(NextResponse.next());
     }
 
     // If not authenticated and trying to access protected route
     if (!hasSession && isProtectedRoute) {
         const loginUrl = new URL('/login', request.url);
         loginUrl.searchParams.set('redirect', pathname);
-        return NextResponse.redirect(loginUrl);
+        return addSecurityHeaders(NextResponse.redirect(loginUrl));
     }
 
     // If authenticated, decode JWT to check setupComplete
@@ -56,18 +56,18 @@ export async function proxy(request: NextRequest) {
 
                 // If setup not complete and trying to access /app, redirect to /setup
                 if (!setupComplete && isAppRoute) {
-                    return NextResponse.redirect(new URL('/setup', request.url));
+                    return addSecurityHeaders(NextResponse.redirect(new URL('/setup', request.url)));
                 }
 
                 // If setup complete and on /setup, redirect to /timeline
                 if (setupComplete && isSetupRoute && pathname === '/setup') {
-                    return NextResponse.redirect(new URL('/timeline', request.url));
+                    return addSecurityHeaders(NextResponse.redirect(new URL('/timeline', request.url)));
                 }
 
                 // If authenticated and on /login, redirect to appropriate page
                 if (pathname === '/login') {
                     const redirectTo = setupComplete ? '/timeline' : '/setup';
-                    return NextResponse.redirect(new URL(redirectTo, request.url));
+                    return addSecurityHeaders(NextResponse.redirect(new URL(redirectTo, request.url)));
                 }
             }
 
@@ -78,7 +78,7 @@ export async function proxy(request: NextRequest) {
                     const response = NextResponse.next();
                     const cookieOptions = getSessionCookieOptions(process.env.NODE_ENV === 'production');
                     response.cookies.set(SESSION_COOKIE_NAME, newToken, cookieOptions);
-                    return response;
+                    return addSecurityHeaders(response);
                 } catch {
                     // Token renewal failed, continue with existing token
                 }
@@ -87,11 +87,33 @@ export async function proxy(request: NextRequest) {
             // If JWT decode fails, clear cookie and redirect to login
             const response = NextResponse.redirect(new URL('/login', request.url));
             response.cookies.delete(SESSION_COOKIE_NAME);
-            return response;
+            return addSecurityHeaders(response);
         }
     }
 
-    return NextResponse.next();
+    return addSecurityHeaders(NextResponse.next());
+}
+
+/**
+ * Add security headers to all responses
+ */
+function addSecurityHeaders(response: NextResponse): NextResponse {
+    response.headers.set('X-Frame-Options', 'DENY');
+    response.headers.set('X-Content-Type-Options', 'nosniff');
+    response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+    response.headers.set('X-DNS-Prefetch-Control', 'off');
+    response.headers.set(
+        'Permissions-Policy',
+        'camera=(), microphone=(), geolocation=()'
+    );
+    if (process.env.NODE_ENV === 'production') {
+        response.headers.set(
+            'Strict-Transport-Security',
+            'max-age=63072000; includeSubDomains; preload'
+        );
+    }
+    response.headers.delete('X-Powered-By');
+    return response;
 }
 
 // Configure which routes the middleware runs on

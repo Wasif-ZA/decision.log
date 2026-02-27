@@ -8,11 +8,11 @@ import { webcrypto } from 'node:crypto'
 
 const crypto = webcrypto as unknown as Crypto
 
-// Derive encryption key from JWT_SECRET
+// Derive encryption key from ENCRYPTION_SECRET (falls back to JWT_SECRET for backward compat)
 async function getEncryptionKey(): Promise<CryptoKey> {
-  const secret = process.env.JWT_SECRET
+  const secret = process.env.ENCRYPTION_SECRET || process.env.JWT_SECRET
   if (!secret) {
-    throw new Error('JWT_SECRET environment variable is required')
+    throw new Error('ENCRYPTION_SECRET environment variable is required')
   }
 
   // Convert secret to key material

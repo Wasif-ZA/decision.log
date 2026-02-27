@@ -28,6 +28,7 @@ export async function GET(
         where: {
           repoId: repo.id,
           userId: user.id,
+          deletedAt: null,
         },
         include: {
           candidate: {

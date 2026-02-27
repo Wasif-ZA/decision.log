@@ -18,14 +18,18 @@ export class AppError extends Error {
   ) {
     super(message)
     this.name = 'AppError'
-    Error.captureStackTrace(this, this.constructor)
+    if (typeof Error.captureStackTrace === 'function') {
+      Error.captureStackTrace(this, this.constructor)
+    }
   }
 
   toJSON() {
     return {
       code: this.code,
       message: this.message,
-      details: this.details,
+      ...(process.env.NODE_ENV !== 'production' && this.details
+        ? { details: this.details }
+        : {}),
     }
   }
 }

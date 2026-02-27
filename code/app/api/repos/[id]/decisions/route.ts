@@ -35,11 +35,14 @@ export async function GET(
         ? (sortByParam as 'createdAt' | 'title' | 'significance')
         : 'createdAt'
       const sortOrder = searchParams.get('sortOrder') === 'asc' ? 'asc' : 'desc'
+      const limit = Math.min(Math.max(Number(searchParams.get('limit')) || 50, 1), 200)
+      const offset = Math.max(Number(searchParams.get('offset')) || 0, 0)
 
       // Build where clause
       const where: Prisma.DecisionWhereInput = {
         repoId: repo.id,
         userId: user.id,
+        deletedAt: null,
       }
 
       if (tag) {
@@ -61,7 +64,10 @@ export async function GET(
         }
       }
 
-      // Get decisions with related data
+      // Count total matching decisions
+      const total = await db.decision.count({ where })
+
+      // Get decisions with related data (paginated)
       const decisions = await db.decision.findMany({
         where,
         include: {
@@ -80,6 +86,8 @@ export async function GET(
         orderBy: {
           [sortBy]: sortOrder,
         },
+        take: limit,
+        skip: offset,
       })
 
       // Get all unique tags for filtering
@@ -88,7 +96,9 @@ export async function GET(
       return NextResponse.json({
         decisions,
         meta: {
-          total: decisions.length,
+          total,
+          limit,
+          offset,
           tags: allTags,
         }
       })

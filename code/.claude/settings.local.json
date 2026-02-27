@@ -6,7 +6,9 @@
       "Bash(grep:*)",
       "Bash(cd \"C:/Users/wasif/OneDrive/Desktop/teehee/03 Projects/decision.log/code\" && npx eslint components/Setup/steps/ChooseBranchStep.tsx 2>&1)",
       "Bash(cd \"C:/Users/wasif/OneDrive/Desktop/teehee/03 Projects/decision.log/code\" && npx eslint lib/csrf.ts app/api/auth/csrf/route.ts lib/apiFetch.ts 2>&1)",
-      "Bash(grep FAIL\\\\|403:*)"
+      "Bash(grep FAIL\\\\|403:*)",
+      "Bash(find:*)",
+      "Bash(cd \"/c/Users/wasif/OneDrive/Desktop/teehee/03 Projects/decision.log/code\" && npm run build 2>&1)"
     ]
   }
 }

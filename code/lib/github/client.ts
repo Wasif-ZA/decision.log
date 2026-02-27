@@ -4,7 +4,7 @@
  * Wrapper for GitHub REST API with authentication and error handling
  */
 
-import { GitHubError } from '@/lib/errors'
+import { GitHubError, RateLimitError } from '@/lib/errors'
 
 export interface GitHubPullRequest {
   number: number
@@ -62,6 +62,32 @@ export class GitHubClient {
   constructor(private token: string) {}
 
   /**
+   * Check response for errors and throw appropriate error type.
+   * Distinguishes GitHub rate limiting (403 with X-RateLimit-Remaining: 0)
+   * from actual permission errors (403 forbidden).
+   */
+  private handleErrorResponse(response: Response, context: string): never {
+    if (response.status === 403) {
+      const remaining = response.headers.get('x-ratelimit-remaining')
+      if (remaining === '0') {
+        const resetHeader = response.headers.get('x-ratelimit-reset')
+        const resetMs = resetHeader
+          ? (Number(resetHeader) * 1000) - Date.now()
+          : 60_000
+        throw new RateLimitError(
+          'GitHub API rate limit exceeded',
+          Math.max(resetMs, 0)
+        )
+      }
+    }
+
+    throw new GitHubError(
+      `${context}: ${response.statusText}`,
+      response.status
+    )
+  }
+
+  /**
    * Fetch pull requests for a repository
    */
   async fetchPullRequests(
@@ -94,10 +120,7 @@ export class GitHubClient {
     })
 
     if (!response.ok) {
-      throw new GitHubError(
-        `Failed to fetch pull requests: ${response.statusText}`,
-        response.status
-      )
+      this.handleErrorResponse(response, 'Failed to fetch pull requests')
     }
 
     const prs: GitHubPullRequest[] = await response.json()
@@ -129,10 +152,7 @@ export class GitHubClient {
     })
 
     if (!response.ok) {
-      throw new GitHubError(
-        `Failed to fetch pull request: ${response.statusText}`,
-        response.status
-      )
+      this.handleErrorResponse(response, 'Failed to fetch pull request')
     }
 
     return response.json()
@@ -171,10 +191,7 @@ export class GitHubClient {
     })
 
     if (!response.ok) {
-      throw new GitHubError(
-        `Failed to fetch commits: ${response.statusText}`,
-        response.status
-      )
+      this.handleErrorResponse(response, 'Failed to fetch commits')
     }
 
     return response.json()
@@ -198,10 +215,7 @@ export class GitHubClient {
     })
 
     if (!response.ok) {
-      throw new GitHubError(
-        `Failed to fetch commit: ${response.statusText}`,
-        response.status
-      )
+      this.handleErrorResponse(response, 'Failed to fetch commit')
     }
 
     return response.json()
@@ -225,10 +239,7 @@ export class GitHubClient {
     })
 
     if (!response.ok) {
-      throw new GitHubError(
-        `Failed to fetch PR diff: ${response.statusText}`,
-        response.status
-      )
+      this.handleErrorResponse(response, 'Failed to fetch PR diff')
     }
 
     return response.text()
@@ -261,10 +272,7 @@ export class GitHubClient {
     })
 
     if (!response.ok) {
-      throw new GitHubError(
-        `Failed to fetch PR files: ${response.statusText}`,
-        response.status
-      )
+      this.handleErrorResponse(response, 'Failed to fetch PR files')
     }
 
     return response.json()
@@ -289,10 +297,7 @@ export class GitHubClient {
     })
 
     if (!response.ok) {
-      throw new GitHubError(
-        `Failed to check rate limit: ${response.statusText}`,
-        response.status
-      )
+      this.handleErrorResponse(response, 'Failed to check rate limit')
     }
 
     const data = await response.json()
@@ -328,10 +333,7 @@ export class GitHubClient {
     })
 
     if (!response.ok) {
-      throw new GitHubError(
-        `Failed to fetch repository: ${response.statusText}`,
-        response.status
-      )
+      this.handleErrorResponse(response, 'Failed to fetch repository')
     }
 
     return response.json()

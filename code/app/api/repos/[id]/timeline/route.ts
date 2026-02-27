@@ -23,11 +23,14 @@ export async function GET(
       const { searchParams } = new URL(request.url)
       const from = searchParams.get('from')
       const to = searchParams.get('to')
+      const limit = Math.min(Math.max(Number(searchParams.get('limit')) || 50, 1), 200)
+      const offset = Math.max(Number(searchParams.get('offset')) || 0, 0)
 
       // Build where clause with optional date range
       const where: Record<string, unknown> = {
         repoId: repo.id,
         userId: user.id,
+        deletedAt: null,
       }
 
       if (from || to) {
@@ -37,7 +40,10 @@ export async function GET(
         }
       }
 
-      // Get decisions with candidates and artifacts
+      // Count total matching decisions
+      const total = await db.decision.count({ where })
+
+      // Get decisions with candidates and artifacts (paginated)
       const decisions = await db.decision.findMany({
         where,
         include: {
@@ -56,9 +62,11 @@ export async function GET(
         orderBy: {
           createdAt: 'desc',
         },
+        take: limit,
+        skip: offset,
       })
 
-      return NextResponse.json({ decisions })
+      return NextResponse.json({ decisions, meta: { total, limit, offset } })
     } catch (error) {
       const formatted = handleError(error)
       return NextResponse.json(

@@ -24,6 +24,29 @@ export async function POST(
 
       const { id: candidateId } = await params
 
+      // Look up the candidate first to get repoId for limit check
+      const candidateLookup = await db.candidate.findUnique({
+        where: { id: candidateId },
+        select: { repoId: true, userId: true, status: true },
+      })
+
+      if (!candidateLookup) {
+        return NextResponse.json(
+          { code: 'NOT_FOUND', message: 'Candidate not found' },
+          { status: 404 }
+        )
+      }
+
+      if (candidateLookup.userId !== user.id) {
+        return NextResponse.json(
+          { code: 'FORBIDDEN', message: 'Access denied' },
+          { status: 403 }
+        )
+      }
+
+      // Check extraction limit BEFORE claiming the candidate
+      await enforceExtractionLimit(candidateLookup.repoId)
+
       // Atomically claim the candidate for extraction.
       const claim = await db.candidate.updateMany({
         where: {
@@ -86,9 +109,6 @@ export async function POST(
           { status: 403 }
         )
       }
-
-      // Check extraction limit
-      await enforceExtractionLimit(candidate.repoId)
 
       // Extract decision
       const result = await extractDecisions([
